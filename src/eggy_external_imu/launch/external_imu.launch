@@ -1,0 +1,15 @@
+<launch>
+  <arg name="port" default="/dev/ttyS4" />
+  <arg name="baud" default="115200" />
+  <arg name="frame_id" default="external_imu_link" />
+  <arg name="publish_rate" default="50.0" />
+
+  <group ns="external_imu">
+    <node pkg="eggy_external_imu" type="external_yb_imu_node.py" name="external_yb_imu" output="screen">
+      <param name="port" value="$(arg port)" />
+      <param name="baud" value="$(arg baud)" />
+      <param name="frame_id" value="$(arg frame_id)" />
+      <param name="publish_rate" value="$(arg publish_rate)" />
+    </node>
+  </group>
+</launch>

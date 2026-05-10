@@ -1,0 +1,21 @@
+{
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+  "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+  "C_Cpp.default.cppStandard": "c++14",
+  "C_Cpp.default.cStandard": "c11",
+  "C_Cpp.default.intelliSenseMode": "linux-gcc-x64",
+  "C_Cpp.errorSquiggles": "Disabled",
+  "files.associations": {
+    "*.launch": "xml",
+    "*.urdf": "xml",
+    "*.xacro": "xml"
+  },
+  "files.exclude": {
+    "build": true,
+    "devel": true,
+    "install": true
+  },
+  "C_Cpp.intelliSenseEngine": "Tag Parser",
+  "C_Cpp.intelliSenseEngineFallback": "Disabled",
+  "cmake.configureOnOpen": false
+}

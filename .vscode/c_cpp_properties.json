@@ -1,0 +1,32 @@
+{
+  "version": 4,
+  "configurations": [
+    {
+      "name": "Linux",
+      "compilerPath": "/usr/bin/g++",
+      "cppStandard": "c++14",
+      "cStandard": "c11",
+      "intelliSenseMode": "linux-gcc-x64",
+      "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+      "includePath": [
+        "${workspaceFolder}/src/**",
+        "${workspaceFolder}/src/eggy_base_driver/include",
+        "${workspaceFolder}/src/eggy_robot_description",
+        "${workspaceFolder}/src/eggy_bringup",
+        "${workspaceFolder}/src/eggy_future_sensors",
+        "${workspaceFolder}/src/eggy_gui_tools",
+        "${workspaceFolder}/build/devel/include",
+        "/opt/ros/noetic/include",
+        "/usr/include",
+        "/usr/include/x86_64-linux-gnu"
+      ],
+      "browse": {
+        "path": [
+          "${workspaceFolder}/src",
+          "/opt/ros/noetic/include"
+        ],
+        "limitSymbolsToIncludedHeaders": true
+      }
+    }
+  ]
+}

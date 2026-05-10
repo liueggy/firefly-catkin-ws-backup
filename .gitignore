@@ -1,0 +1,48 @@
+# Firefly ROS catkin workspace
+
+# catkin build outputs
+/build/
+/devel/
+/install/
+/log/
+/logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+
+# C/C++ build artifacts
+*.o
+*.so
+*.a
+*.d
+*.cmake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# ROS runtime/log artifacts
+.ros/
+*.bag
+*.bag.active
+*.db3
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Secrets / credentials - never commit
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+*secret*
+*token*
+*password*
+*credential*

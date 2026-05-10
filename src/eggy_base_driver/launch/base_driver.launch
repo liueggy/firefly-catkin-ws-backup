@@ -1,0 +1,25 @@
+<launch>
+  <arg name="port" default="/dev/ttyACM0" />
+  <arg name="baudrate" default="115200" />
+  <arg name="use_python_debug_driver" default="false" />
+
+  <node unless="$(arg use_python_debug_driver)"
+        pkg="eggy_base_driver"
+        type="stm32_base_driver_node"
+        name="stm32_base_driver"
+        output="screen">
+    <rosparam command="load" file="$(find eggy_base_driver)/config/base_driver.yaml" />
+    <param name="port" value="$(arg port)" />
+    <param name="baudrate" value="$(arg baudrate)" />
+  </node>
+
+  <node if="$(arg use_python_debug_driver)"
+        pkg="eggy_base_driver"
+        type="stm32_base_driver.py"
+        name="stm32_base_driver"
+        output="screen">
+    <rosparam command="load" file="$(find eggy_base_driver)/config/base_driver.yaml" />
+    <param name="port" value="$(arg port)" />
+    <param name="baudrate" value="$(arg baudrate)" />
+  </node>
+</launch>

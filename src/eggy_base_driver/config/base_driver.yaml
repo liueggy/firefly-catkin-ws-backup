@@ -1,0 +1,29 @@
+port: /dev/ttyACM0
+baudrate: 115200
+
+# Frames
+status_frame_size: 24
+control_rate: 20.0
+status_timeout: 1.0
+
+# Topic and frame names
+base_frame_id: base_link
+odom_frame_id: odom
+imu_frame_id: imu_link
+publish_tf: true
+
+# STM32上行 IMU 为原始 int16。根据当前静止 Z 轴约 16384，初步按 MPU6050 ±2g 换算。
+acc_lsb_per_g: 16384.0
+standard_gravity: 9.80665
+
+# 陀螺仪量程需以后结合固件初始化确认。默认先按 ±2000 dps 的 16.4 LSB/(deg/s)。
+gyro_lsb_per_deg_s: 16.4
+
+# cmd_vel 安全限幅。真实底层固件仍有自身限幅。
+max_linear_x: 0.5
+max_linear_y: 0.5
+max_angular_z: 1.0
+cmd_vel_timeout: 0.5
+
+# 里程计由 STM32 上行 X/Y/Z 速度积分得到。
+odom_publish_rate: 20.0

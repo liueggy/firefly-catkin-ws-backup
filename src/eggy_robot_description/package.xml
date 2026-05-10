@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>eggy_robot_description</name>
+  <version>0.1.0</version>
+  <description>URDF description for Eggy mecanum robot.</description>
+  <maintainer email="eggy@example.com">eggy</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <export />
+</package>

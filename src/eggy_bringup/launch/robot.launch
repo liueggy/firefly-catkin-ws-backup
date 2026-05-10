@@ -1,0 +1,27 @@
+<launch>
+  <arg name="port" default="/dev/eggy_base" />
+  <arg name="baudrate" default="115200" />
+  <arg name="with_description" default="true" />
+  <arg name="use_lidar" default="true" />
+  <arg name="use_external_imu" default="true" />
+  <arg name="external_imu_port" default="/dev/ttyS4" />
+
+  <group if="$(arg with_description)">
+    <include file="$(find eggy_robot_description)/launch/description.launch" />
+  </group>
+
+  <include file="$(find eggy_base_driver)/launch/base_driver.launch">
+    <arg name="port" value="$(arg port)" />
+    <arg name="baudrate" value="$(arg baudrate)" />
+  </include>
+
+  <group if="$(arg use_lidar)">
+    <include file="$(find rplidar_ros)/launch/rplidar_a1.launch" />
+  </group>
+
+  <group if="$(arg use_external_imu)">
+    <include file="$(find eggy_external_imu)/launch/external_imu.launch">
+      <arg name="port" value="$(arg external_imu_port)" />
+    </include>
+  </group>
+</launch>
