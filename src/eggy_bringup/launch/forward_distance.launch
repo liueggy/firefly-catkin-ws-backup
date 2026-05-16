@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+  <!-- 前进指定距离闭环控制 launch 文件 -->
+  
+  <!-- 参数 -->
+  <arg name="target_distance" default="1.0" doc="目标前进距离 (m)" />
+  <arg name="linear_speed" default="0.1" doc="前进速度 (m/s)" />
+  <arg name="heading_kp" default="2.0" doc="航向 PID 比例系数" />
+  <arg name="distance_threshold" default="0.05" doc="距离阈值 (m)" />
+  <arg name="heading_threshold" default="0.1" doc="航向阈值 (rad)" />
+  
+  <!-- 前进距离控制节点 -->
+  <node name="forward_distance_controller" pkg="eggy_bringup" type="forward_distance_control.py" output="screen">
+    <param name="target_distance" value="$(arg target_distance)" />
+    <param name="linear_speed" value="$(arg linear_speed)" />
+    <param name="heading_kp" value="$(arg heading_kp)" />
+    <param name="distance_threshold" value="$(arg distance_threshold)" />
+    <param name="heading_threshold" value="$(arg heading_threshold)" />
+  </node>
+</launch>
