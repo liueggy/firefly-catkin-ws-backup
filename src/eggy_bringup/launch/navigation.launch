@@ -21,7 +21,7 @@
     <param name="laser_max_range" value="8.0" />
     <param name="laser_min_range" value="0.15" />
     <param name="laser_max_beams" value="60" />
-    <param name="transform_tolerance" value="1.0" />
+    <param name="transform_tolerance" value="0.3" />
     <param name="initial_pose_x" value="0.0" />
     <param name="initial_pose_y" value="0.0" />
     <param name="initial_pose_a" value="0.0" />
@@ -33,11 +33,11 @@
     <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/costmap_common_params.yaml" command="load" ns="local_costmap" />
     <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/global_costmap_params.yaml" command="load" />
     <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/local_costmap_params.yaml" command="load" />
-    <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/dwa_local_planner_params.yaml" command="load" />
-    <param name="base_local_planner" value="dwa_local_planner/DWAPlannerROS" />
-    <param name="controller_frequency" value="10.0" />
-    <param name="planner_frequency" value="2.0" />
-    <param name="conservative_reset_dist" value="1.0" />
+    <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/teb_local_planner_params.yaml" command="load" />
+    <param name="base_local_planner" value="teb_local_planner/TebLocalPlannerROS" />
+    <param name="controller_frequency" value="15.0" />
+    <param name="planner_frequency" value="5.0" />
+    <param name="conservative_reset_dist" value="0.5" />
     <param name="clearing_rotation_allowed" value="true" />
   </node>
 </launch>

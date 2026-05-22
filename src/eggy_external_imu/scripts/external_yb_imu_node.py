@@ -22,7 +22,7 @@ class YbImuNode:
         self.q0=1.0; self.q1=self.q2=self.q3=0.0
         self.roll=self.pitch=self.yaw=0.0
         self.height=self.temperature=self.pressure=self.pressure_contrast=0.0
-        self.have_raw=False; self.have_quat=False; self.have_baro=False
+        self.have_raw=False; self.have_quat=False; self.have_euler=False; self.have_baro=False
         self.pub_imu=rospy.Publisher('imu/data', Imu, queue_size=10)
         self.pub_raw=rospy.Publisher('imu/data_raw', Imu, queue_size=10)
         self.pub_mag=rospy.Publisher('imu/mag', MagneticField, queue_size=10)
@@ -50,6 +50,7 @@ class YbImuNode:
                 self.have_quat=True
             elif f==F_EULER and len(data)>=12:
                 self.roll,self.pitch,self.yaw=struct.unpack('<fff', data[:12])
+                self.have_euler=True
             elif f==F_BARO and len(data)>=16:
                 self.height,self.temperature,self.pressure,self.pressure_contrast=struct.unpack('<ffff', data[:16])
                 self.have_baro=True
@@ -90,7 +91,8 @@ class YbImuNode:
                 mx,my,mz=self.mx,self.my,self.mz
                 q0,q1,q2,q3=self.q0,self.q1,self.q2,self.q3
                 h,t,p=self.height,self.temperature,self.pressure
-                have_raw,have_quat,have_baro=self.have_raw,self.have_quat,self.have_baro
+                roll,pitch,yaw=self.roll,self.pitch,self.yaw
+                have_raw,have_quat,have_euler,have_baro=self.have_raw,self.have_quat,self.have_euler,self.have_baro
             if have_raw:
                 raw=Imu(); raw.header.stamp=now; raw.header.frame_id=self.frame_id
                 raw.orientation_covariance[0]=-1.0
@@ -106,6 +108,8 @@ class YbImuNode:
                     imu.angular_velocity=raw.angular_velocity
                     imu.linear_acceleration=raw.linear_acceleration
                     self.pub_imu.publish(imu)
+                if have_euler:
+                    self.pub_euler.publish(Float32(yaw))
             if have_baro:
                 fp=FluidPressure(); fp.header.stamp=now; fp.header.frame_id=self.frame_id; fp.fluid_pressure=p
                 tm=Temperature(); tm.header=fp.header; tm.temperature=t

@@ -1,8 +1,10 @@
-# 全局 costmap 参数
+# 全局 costmap 参数 — 探索模式（从 GMapping 实时地图读取）
 global_costmap:
   global_frame: map
   robot_base_frame: base_link
   update_frequency: 2.0
   publish_frequency: 1.0
-  static_map: true
+  static_map: false
+  rolling_window: false
+  map_topic: /map
   transform_tolerance: 0.3

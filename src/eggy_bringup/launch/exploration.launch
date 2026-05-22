@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+  <!-- 自动探索 launch：GMapping + 动态地图 + move_base + TEB + explore_lite -->
+  
+  <!-- move_base（探索模式：动态地图，从 /map 实时读取） -->
+  <node name="move_base" pkg="move_base" type="move_base" output="screen">
+    <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/costmap_common_params.yaml" command="load" ns="global_costmap" />
+    <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/costmap_common_params.yaml" command="load" ns="local_costmap" />
+    <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/global_costmap_explore_params.yaml" command="load" />
+    <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/local_costmap_params.yaml" command="load" />
+    <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/teb_local_planner_params.yaml" command="load" />
+    <param name="base_local_planner" value="teb_local_planner/TebLocalPlannerROS" />
+    <param name="controller_frequency" value="10.0" />
+    <param name="planner_frequency" value="2.0" />
+    <param name="conservative_reset_dist" value="1.0" />
+    <param name="clearing_rotation_allowed" value="true" />
+  </node>
+  
+  <!-- explore_lite 前沿探索（读取 move_base 的全局 costmap） -->
+  <node pkg="explore_lite" type="explore" respawn="false" name="explore" output="screen">
+    <param name="robot_base_frame" value="base_link" />
+    <param name="costmap_topic" value="move_base/global_costmap/costmap" />
+    <param name="costmap_updates_topic" value="move_base/global_costmap/costmap_updates" />
+    <param name="visualize" value="true" />
+    <param name="planner_frequency" value="0.5" />
+    <param name="progress_timeout" value="45.0" />
+    <param name="potential_scale" value="3.0" />
+    <param name="orientation_scale" value="0.0" />
+    <param name="gain_scale" value="1.0" />
+    <param name="transform_tolerance" value="0.5" />
+    <param name="min_frontier_size" value="0.5" />
+  </node>
+</launch>

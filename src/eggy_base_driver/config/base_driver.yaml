@@ -10,7 +10,7 @@ status_timeout: 1.0
 base_frame_id: base_link
 odom_frame_id: odom
 imu_frame_id: imu_link
-publish_tf: true
+publish_tf: false
 
 # STM32上行 IMU 为原始 int16。根据当前静止 Z 轴约 16384，初步按 MPU6050 ±2g 换算。
 acc_lsb_per_g: 16384.0

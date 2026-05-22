@@ -11,6 +11,8 @@
     <rosparam command="load" file="$(find eggy_base_driver)/config/base_driver.yaml" />
     <param name="port" value="$(arg port)" />
     <param name="baudrate" value="$(arg baudrate)" />
+    <remap from="odom" to="/wheel_odom" />
+    <remap from="imu/data_raw" to="/stm32/imu/data_raw" />
   </node>
 
   <node if="$(arg use_python_debug_driver)"
@@ -21,5 +23,7 @@
     <rosparam command="load" file="$(find eggy_base_driver)/config/base_driver.yaml" />
     <param name="port" value="$(arg port)" />
     <param name="baudrate" value="$(arg baudrate)" />
+    <remap from="odom" to="/wheel_odom" />
+    <remap from="imu/data_raw" to="/stm32/imu/data_raw" />
   </node>
 </launch>

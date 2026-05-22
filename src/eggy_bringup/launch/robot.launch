@@ -26,4 +26,19 @@
       <arg name="frame_id" value="$(arg external_imu_frame_id)" />
     </include>
   </group>
+
+  <!-- Fuse wheel odometry translation with external IMU yaw for navigation. -->
+  <node pkg="eggy_bringup" type="eggy_external_imu_odom_fuser.py" name="eggy_external_imu_odom_fuser" output="screen">
+    <param name="wheel_odom_topic" value="/wheel_odom" />
+    <param name="external_imu_topic" value="/external_imu/imu/data" />
+    <param name="external_imu_raw_topic" value="/external_imu/imu/data_raw" />
+    <param name="odom_frame_id" value="odom" />
+    <param name="base_frame_id" value="base_link" />
+    <param name="publish_tf" value="true" />
+    <param name="rate" value="50.0" />
+  </node>
+
+  <!-- Backward compatibility for website/agent: expose external IMU on legacy /imu/data_raw. -->
+  <node pkg="topic_tools" type="relay" name="external_imu_to_legacy_imu_raw"
+        args="/external_imu/imu/data_raw /imu/data_raw" output="screen" />
 </launch>
