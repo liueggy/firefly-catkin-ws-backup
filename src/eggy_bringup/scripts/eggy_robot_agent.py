@@ -8,6 +8,7 @@ Design:
 - Send preview in ordinary occupancy_grid.data so the existing web frontend can draw it.
 """
 import asyncio
+import base64
 import json
 import math
 import os
@@ -44,8 +45,8 @@ SEND_HZ = float(os.environ.get("EGGY_AGENT_HZ", "3"))
 BAT_FULL = float(os.environ.get("EGGY_BAT_FULL", "12.0"))
 BAT_EMPTY = float(os.environ.get("EGGY_BAT_EMPTY", "10.5"))
 EFFECTIVE_LIDAR_MIN = float(os.environ.get("EGGY_EFFECTIVE_LIDAR_MIN", "0.15"))
-MAP_MAX_DIM = int(os.environ.get("EGGY_MAP_MAX_DIM", "220"))
-MAP_MARGIN = int(os.environ.get("EGGY_MAP_MARGIN", "24"))
+MAP_MAX_DIM = int(os.environ.get("EGGY_MAP_MAX_DIM", "576"))
+MAP_MARGIN = int(os.environ.get("EGGY_MAP_MARGIN", "0"))
 MAP_MIN_PERIOD = float(os.environ.get("EGGY_MAP_MIN_PERIOD", "1.0"))
 STREAM_MODE = os.environ.get("EGGY_STREAM_MODE", "map").lower()  # lite | map
 
@@ -490,7 +491,7 @@ def nav_view():
         occ["stale"] = occ["age_sec"] > 8.0
 
     robot = {"x": 0, "y": 0, "yaw": 0, "vx": 0, "wz": 0, "pose_age_sec": None}
-    map_pose = lookup_map_base_pose()
+    map_pose = None if mode == "map" else lookup_map_base_pose()
     if odom:
         pos = odom.pose.pose.position
         tw = odom.twist.twist
@@ -502,7 +503,6 @@ def nav_view():
             "vx": round(tw.linear.x, 3),
             "wz": round(tw.angular.z, 3),
             "pose_age_sec": round(now() - last.get("/odom", 0), 2),
-            "pose_frame": "map" if map_pose else "odom",
         })
 
     pts, summary = lidar_points(scan, odom, max_points=90 if mode == "map" else 36, pose=map_pose)
@@ -518,6 +518,7 @@ def nav_view():
         "diagnostics": False,
         "robot_id": ROBOT_ID,
         "stream_mode": mode,
+        "map_source": "navigation" if state.get("navigation_active") else "mapping",
         "map_preview": True,
         "auto_explore": auto_exploring,
     }
@@ -534,6 +535,7 @@ def nav_view():
         "robot": robot,
         "map": {"frame_id": "map", "resolution": occ.get("resolution", 0.05), "origin_x": occ.get("origin_x", -10), "origin_y": occ.get("origin_y", -10), "width_m": width_m, "height_m": height_m},
         "occupancy_grid": occ,
+        "raw_map_base64": occ.get("data") and base64.b64encode(bytes([min(254,max(0,(v+128)&255)) for v in occ["data"]])).decode("ascii") or "",
         "lidar_points": pts,
         "global_plan": [],
         "local_plan": [],
@@ -632,11 +634,13 @@ async def cloud_loop():
                             map_path = str(d.get("map_path") or "/root/catkin_ws/maps/manual/latest.yaml")
                             subprocess.Popen(["/usr/local/bin/eggy-run-navigation", map_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                             mark("/navigation")
+                            state["navigation_active"] = True
                             add_log("INFO", "navigation: started map=%s" % map_path, "cloud")
                         elif typ == "stop_navigation":
                             import subprocess
                             subprocess.Popen(["/usr/local/bin/eggy-stop-navigation"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                             mark("/navigation_stop")
+                            state["navigation_active"] = False
                             add_log("INFO", "navigation: stopped", "cloud")
                         elif typ == "cancel_goal":
                             import subprocess

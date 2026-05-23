@@ -41,4 +41,7 @@
   <!-- Backward compatibility for website/agent: expose external IMU on legacy /imu/data_raw. -->
   <node pkg="topic_tools" type="relay" name="external_imu_to_legacy_imu_raw"
         args="/external_imu/imu/data_raw /imu/data_raw" output="screen" />
+
+  <!-- Compatibility for Ros_Qt5_Gui_App via rosbridge. -->
+  <include file="$(find eggy_bringup)/launch/ros_qt5_gui_adapter.launch" />
 </launch>

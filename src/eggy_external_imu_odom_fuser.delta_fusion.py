@@ -38,8 +38,12 @@ latest_euler_time = None
 base_yaw = None
 last_raw_stamp = None
 last_raw_seq = None
-imu_to_base_yaw_offset = math.radians(5.0)
-
+imu_to_base_yaw_offset = math.radians(-122.5)
+fused_x = 0.0
+fused_y = 0.0
+last_wheel_x = None
+last_wheel_y = None
+last_wheel_yaw = None
 
 
 def norm_ang(a):
@@ -59,9 +63,28 @@ def yaw_from_quat(q):
 
 
 def wheel_cb(msg):
-    global latest_wheel
+    global latest_wheel, fused_x, fused_y, last_wheel_x, last_wheel_y, last_wheel_yaw
     with lock:
         latest_wheel = msg
+        pos = msg.pose.pose.position
+        wyaw = yaw_from_quat(msg.pose.pose.orientation)
+        if last_wheel_x is None:
+            last_wheel_x, last_wheel_y, last_wheel_yaw = pos.x, pos.y, wyaw
+            return
+        dx = pos.x - last_wheel_x
+        dy = pos.y - last_wheel_y
+        # Convert wheel odom frame delta to robot-local delta using previous wheel yaw.
+        cy = math.cos(last_wheel_yaw)
+        sy = math.sin(last_wheel_yaw)
+        local_dx = cy * dx + sy * dy
+        local_dy = -sy * dx + cy * dy
+        if base_yaw is not None:
+            by = base_yaw
+            cb = math.cos(by)
+            sb = math.sin(by)
+            fused_x += cb * local_dx - sb * local_dy
+            fused_y += sb * local_dx + cb * local_dy
+        last_wheel_x, last_wheel_y, last_wheel_yaw = pos.x, pos.y, wyaw
 
 
 def euler_cb(msg):
@@ -78,8 +101,12 @@ def raw_cb(msg):
         now = rospy.Time.now().to_sec()
         if base_yaw is None:
             if latest_euler_yaw is not None and latest_euler_time is not None and now - latest_euler_time < 2.0:
+                global fused_x, fused_y
                 base_yaw = imu_yaw_to_base_yaw(latest_euler_yaw)
-                rospy.loginfo('external IMU yaw initialized from official euler: imu=%.3f base=%.3f', latest_euler_yaw, base_yaw)
+                if latest_wheel is not None:
+                    fused_x = float(latest_wheel.pose.pose.position.x)
+                    fused_y = float(latest_wheel.pose.pose.position.y)
+                rospy.loginfo('external IMU yaw initialized from official euler: imu=%.3f base=%.3f fused=(%.3f,%.3f)', latest_euler_yaw, base_yaw, fused_x, fused_y)
             else:
                 return
             last_raw_stamp = msg.header.stamp.to_sec() if msg.header.stamp else now
@@ -97,7 +124,7 @@ def raw_cb(msg):
 def main():
     global imu_to_base_yaw_offset
     rospy.init_node('eggy_external_imu_odom_fuser')
-    imu_to_base_yaw_offset = math.radians(float(rospy.get_param('~imu_to_base_yaw_offset_deg', 5.0)))
+    imu_to_base_yaw_offset = math.radians(float(rospy.get_param('~imu_to_base_yaw_offset_deg', -122.5)))
     odom_frame = rospy.get_param('~odom_frame_id', 'odom')
     base_frame = rospy.get_param('~base_frame_id', 'base_link')
     wheel_topic = rospy.get_param('~wheel_odom_topic', '/wheel_odom')
@@ -122,19 +149,21 @@ def main():
             w = latest_wheel
             raw = latest_raw
             yaw = base_yaw
-        if w is None:
+        if w is None or yaw is None:
             if not warned:
                 rospy.logwarn('waiting for wheel odom and external IMU yaw init')
                 warned = True
             rate.sleep(); continue
 
         now_t = rospy.Time.now()
-        q = (w.pose.pose.orientation.x, w.pose.pose.orientation.y, w.pose.pose.orientation.z, w.pose.pose.orientation.w)
+        q = quat_from_yaw(yaw)
         out = Odometry()
         out.header.stamp = now_t
         out.header.frame_id = odom_frame
         out.child_frame_id = base_frame
-        out.pose.pose.position = w.pose.pose.position
+        out.pose.pose.position.x = fused_x
+        out.pose.pose.position.y = fused_y
+        out.pose.pose.position.z = w.pose.pose.position.z
         out.pose.pose.orientation.x = q[0]
         out.pose.pose.orientation.y = q[1]
         out.pose.pose.orientation.z = q[2]
