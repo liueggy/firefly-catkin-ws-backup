@@ -29,6 +29,7 @@ try:
     from nav_msgs.msg import OccupancyGrid, Odometry
     from sensor_msgs.msg import Imu, LaserScan
     from std_msgs.msg import Float32, String
+    import tf
 except Exception as e:
     raise SystemExit("Missing ROS Python environment: %r" % (e,))
 
@@ -69,6 +70,7 @@ simple_goal_pub = None
 simple_cancel_pub = None
 auto_exploring = False
 simple_nav_status = "idle"
+tf_listener = None
 
 
 def now():
@@ -110,6 +112,28 @@ def yaw_from_q(q):
         return 0.0
     x, y, z, w = q.x, q.y, q.z, q.w
     return math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+
+
+def yaw_from_tuple(q):
+    if not q:
+        return 0.0
+    x, y, z, w = q
+    return math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+
+
+def lookup_map_base_pose():
+    # Use map->base_link for web map overlay. /odom and /map diverge during SLAM.
+    global tf_listener
+    if tf_listener is None:
+        return None
+    for base in ("base_link", "base_footprint"):
+        try:
+            tf_listener.waitForTransform("map", base, rospy.Time(0), rospy.Duration(0.05))
+            trans, rot = tf_listener.lookupTransform("map", base, rospy.Time(0))
+            return float(trans[0]), float(trans[1]), yaw_from_tuple(rot)
+        except Exception:
+            continue
+    return None
 
 
 def odom_cb(msg):
@@ -316,7 +340,7 @@ def ros_publish_cmd(msg):
     add_log("INFO", "cmd_vel x=%.2f y=%.2f z=%.2f" % (lx, ly, az), "cloud")
 
 
-def lidar_points(scan, odom, max_points=90):
+def lidar_points(scan, odom, max_points=90, pose=None):
     if not scan:
         return [], {"front": None, "nearest": None, "nearest_angle": None, "range_min": None, "effective_min": EFFECTIVE_LIDAR_MIN, "range_max": None, "front_sector_deg": 24, "note": "front=前方±12°；nearest=360°全局最近障碍"}
     ranges = scan.ranges
@@ -326,7 +350,9 @@ def lidar_points(scan, odom, max_points=90):
     rmin = max(sensor_min, EFFECTIVE_LIDAR_MIN)
     rmax = min(scan.range_max, 6.0)
     rx = ry = yaw = 0.0
-    if odom:
+    if pose:
+        rx, ry, yaw = pose
+    elif odom:
         pos = odom.pose.pose.position
         rx, ry = pos.x, pos.y
         yaw = yaw_from_q(odom.pose.pose.orientation)
@@ -464,19 +490,22 @@ def nav_view():
         occ["stale"] = occ["age_sec"] > 8.0
 
     robot = {"x": 0, "y": 0, "yaw": 0, "vx": 0, "wz": 0, "pose_age_sec": None}
+    map_pose = lookup_map_base_pose()
     if odom:
         pos = odom.pose.pose.position
         tw = odom.twist.twist
+        px, py, pyaw = (map_pose if map_pose else (pos.x, pos.y, yaw_from_q(odom.pose.pose.orientation)))
         robot.update({
-            "x": round(pos.x, 3),
-            "y": round(pos.y, 3),
-            "yaw": round(yaw_from_q(odom.pose.pose.orientation), 3),
+            "x": round(px, 3),
+            "y": round(py, 3),
+            "yaw": round(pyaw, 3),
             "vx": round(tw.linear.x, 3),
             "wz": round(tw.angular.z, 3),
             "pose_age_sec": round(now() - last.get("/odom", 0), 2),
+            "pose_frame": "map" if map_pose else "odom",
         })
 
-    pts, summary = lidar_points(scan, odom, max_points=90 if mode == "map" else 36)
+    pts, summary = lidar_points(scan, odom, max_points=90 if mode == "map" else 36, pose=map_pose)
     batt = {"voltage": round(float(bv), 2) if bv is not None else None, "percent": battery_percent(bv), "rule": ">=%sV=100%%, %s-%sV linear" % (BAT_FULL, BAT_EMPTY, BAT_FULL)}
     sysinfo = {
         "ros": True,
@@ -696,8 +725,9 @@ async def cloud_loop():
 
 
 def main():
-    global cmd_pub, map_pub
+    global cmd_pub, map_pub, tf_listener
     rospy.init_node("eggy_robot_agent", anonymous=False, disable_signals=True)
+    tf_listener = tf.TransformListener()
     cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=3)
     map_pub = rospy.Publisher("/eggy/map_override", OccupancyGrid, queue_size=1, latch=True)
     global goal_pub
