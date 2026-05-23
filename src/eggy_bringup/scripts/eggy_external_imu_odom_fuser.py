@@ -13,7 +13,12 @@ Yaw policy for navigation:
     fused yaw can drift after rotation under magnetic/fusion influence.
 
 Mounting:
-  base_link -> imu_link yaw = pi in URDF, so initial base_yaw = imu_yaw + pi.
+  Initial offset is configurable by ~imu_to_base_yaw_offset_deg.
+  2026-05-23 forward calibration measured +X motion vs yaw diff about -150 deg,
+  initial +30 deg was insufficient because wheel pose xy and IMU yaw were mixed.
+  Forward calibration showed yaw should be about -122.5 deg offset for current mounting.
+  Fuser integrates wheel odom *delta translation* in local wheel frame using external IMU yaw,
+  instead of copying wheel_odom.position directly. This keeps /odom x/y/yaw self-consistent.
   A pure yaw mounting rotation does not invert gyro.z.
 """
 import math
@@ -33,6 +38,12 @@ latest_euler_time = None
 base_yaw = None
 last_raw_stamp = None
 last_raw_seq = None
+imu_to_base_yaw_offset = math.radians(-122.5)
+fused_x = 0.0
+fused_y = 0.0
+last_wheel_x = None
+last_wheel_y = None
+last_wheel_yaw = None
 
 
 def norm_ang(a):
@@ -44,7 +55,7 @@ def quat_from_yaw(yaw):
 
 
 def imu_yaw_to_base_yaw(imu_yaw):
-    return norm_ang(imu_yaw + math.pi)
+    return norm_ang(imu_yaw + imu_to_base_yaw_offset)
 
 
 def yaw_from_quat(q):
@@ -52,9 +63,28 @@ def yaw_from_quat(q):
 
 
 def wheel_cb(msg):
-    global latest_wheel
+    global latest_wheel, fused_x, fused_y, last_wheel_x, last_wheel_y, last_wheel_yaw
     with lock:
         latest_wheel = msg
+        pos = msg.pose.pose.position
+        wyaw = yaw_from_quat(msg.pose.pose.orientation)
+        if last_wheel_x is None:
+            last_wheel_x, last_wheel_y, last_wheel_yaw = pos.x, pos.y, wyaw
+            return
+        dx = pos.x - last_wheel_x
+        dy = pos.y - last_wheel_y
+        # Convert wheel odom frame delta to robot-local delta using previous wheel yaw.
+        cy = math.cos(last_wheel_yaw)
+        sy = math.sin(last_wheel_yaw)
+        local_dx = cy * dx + sy * dy
+        local_dy = -sy * dx + cy * dy
+        if base_yaw is not None:
+            by = base_yaw
+            cb = math.cos(by)
+            sb = math.sin(by)
+            fused_x += cb * local_dx - sb * local_dy
+            fused_y += sb * local_dx + cb * local_dy
+        last_wheel_x, last_wheel_y, last_wheel_yaw = pos.x, pos.y, wyaw
 
 
 def euler_cb(msg):
@@ -88,7 +118,9 @@ def raw_cb(msg):
 
 
 def main():
+    global imu_to_base_yaw_offset
     rospy.init_node('eggy_external_imu_odom_fuser')
+    imu_to_base_yaw_offset = math.radians(float(rospy.get_param('~imu_to_base_yaw_offset_deg', -122.5)))
     odom_frame = rospy.get_param('~odom_frame_id', 'odom')
     base_frame = rospy.get_param('~base_frame_id', 'base_link')
     wheel_topic = rospy.get_param('~wheel_odom_topic', '/wheel_odom')
@@ -104,7 +136,7 @@ def main():
     rospy.Subscriber(raw_topic, Imu, raw_cb, queue_size=200)
 
     rospy.loginfo('external IMU fuser active: wheel=%s raw=%s euler_init=%s -> /odom', wheel_topic, raw_topic, euler_topic)
-    rospy.loginfo('manual-compliant: euler rad init + pi mount compensation, then external gyro.z integration')
+    rospy.loginfo('external imu yaw: euler rad init + offset %.1f deg, then gyro.z integration', math.degrees(imu_to_base_yaw_offset))
 
     rate = rospy.Rate(rate_hz)
     warned = False
@@ -125,7 +157,9 @@ def main():
         out.header.stamp = now_t
         out.header.frame_id = odom_frame
         out.child_frame_id = base_frame
-        out.pose.pose.position = w.pose.pose.position
+        out.pose.pose.position.x = fused_x
+        out.pose.pose.position.y = fused_y
+        out.pose.pose.position.z = w.pose.pose.position.z
         out.pose.pose.orientation.x = q[0]
         out.pose.pose.orientation.y = q[1]
         out.pose.pose.orientation.z = q[2]
