@@ -1,0 +1,25 @@
+[Unit]
+Description=Eggy Robot Cloud Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Environment=LD_LIBRARY_PATH=/opt/ros/noetic/lib
+Environment=PYTHONPATH=/opt/ros/noetic/lib/python3/dist-packages:/root/catkin_ws/devel/lib/python3/dist-packages
+Type=simple
+Environment=EGGY_CLOUD_URL=wss://liueggy.live/robot/eggy-001
+Environment=EGGY_ROSBRIDGE_URL=ws://127.0.0.1:9090
+Environment=EGGY_ROBOT_ID=eggy-001
+Environment=EGGY_AGENT_HZ=4
+Environment=EGGY_PROXY_URL=http://127.0.0.1:7890
+Environment=HTTP_PROXY=http://127.0.0.1:7890
+Environment=HTTPS_PROXY=http://127.0.0.1:7890
+Environment=http_proxy=http://127.0.0.1:7890
+Environment=https_proxy=http://127.0.0.1:7890
+ExecStart=/usr/bin/python3 /usr/local/bin/eggy-robot-agent
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target
