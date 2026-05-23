@@ -1,0 +1,58 @@
+<launch>
+  <arg name="scan_topic" default="/scan" />
+  <arg name="base_frame" default="base_link" />
+  <arg name="odom_frame" default="odom" />
+  <arg name="map_update_interval" default="3.0" />
+  <arg name="particles" default="20" />
+  <arg name="linear_update" default="0.30" />
+  <arg name="angular_update" default="0.30" />
+  <arg name="temporal_update" default="3.0" />
+  <arg name="xmin" default="-8.0" />
+  <arg name="ymin" default="-8.0" />
+  <arg name="xmax" default="8.0" />
+  <arg name="ymax" default="8.0" />
+  <arg name="delta" default="0.05" />
+  <arg name="throttle_scans" default="1" />
+  <arg name="autosave" default="false" />
+  <arg name="autosave_interval" default="45" />
+  <arg name="autosave_dir" default="/root/catkin_ws/maps/auto" />
+
+  <node pkg="gmapping" type="slam_gmapping" name="slam_gmapping" output="screen">
+    <remap from="scan" to="$(arg scan_topic)" />
+    <param name="base_frame" value="$(arg base_frame)" />
+    <param name="odom_frame" value="$(arg odom_frame)" />
+    <param name="map_update_interval" value="$(arg map_update_interval)" />
+    <param name="maxUrange" value="8.0" />
+    <param name="sigma" value="0.05" />
+    <param name="kernelSize" value="1" />
+    <param name="lstep" value="0.05" />
+    <param name="astep" value="0.05" />
+    <param name="iterations" value="5" />
+    <param name="lsigma" value="0.075" />
+    <param name="ogain" value="3.0" />
+    <param name="lskip" value="1" />
+    <param name="minimumScore" value="50" />
+    <param name="linearUpdate" value="$(arg linear_update)" />
+    <param name="angularUpdate" value="$(arg angular_update)" />
+    <param name="temporalUpdate" value="$(arg temporal_update)" />
+    <param name="resampleThreshold" value="0.5" />
+    <param name="particles" value="$(arg particles)" />
+    <param name="xmin" value="$(arg xmin)" />
+    <param name="ymin" value="$(arg ymin)" />
+    <param name="xmax" value="$(arg xmax)" />
+    <param name="ymax" value="$(arg ymax)" />
+    <param name="delta" value="$(arg delta)" />
+    <param name="llsamplerange" value="0.01" />
+    <param name="llsamplestep" value="0.01" />
+    <param name="lasamplerange" value="0.005" />
+    <param name="lasamplestep" value="0.005" />
+    <param name="throttle_scans" value="$(arg throttle_scans)" />
+  </node>
+
+  <group if="$(arg autosave)">
+    <node pkg="eggy_bringup" type="eggy_auto_map_saver.py" name="eggy_auto_map_saver" output="screen">
+      <env name="EGGY_AUTO_SAVE_INTERVAL" value="$(arg autosave_interval)" />
+      <env name="EGGY_AUTO_MAP_DIR" value="$(arg autosave_dir)" />
+    </node>
+  </group>
+</launch>

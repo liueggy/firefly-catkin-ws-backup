@@ -1,0 +1,35 @@
+<launch>
+  <arg name="duration_sec" default="60.0" />
+  <arg name="map_path" default="/root/catkin_ws/maps/auto_map" />
+  <arg name="linear_speed" default="0.08" />
+  <arg name="turn_speed" default="0.25" />
+  <arg name="particles" default="20" />
+  <arg name="xmin" default="-8.0" />
+  <arg name="ymin" default="-8.0" />
+  <arg name="xmax" default="8.0" />
+  <arg name="ymax" default="8.0" />
+  <arg name="map_update_interval" default="3.0" />
+  <arg name="linear_update" default="0.30" />
+  <arg name="angular_update" default="0.30" />
+  <arg name="temporal_update" default="3.0" />
+  <arg name="save_map" default="true" />
+  <arg name="gmapping_quiet" default="false" />
+
+  <node pkg="eggy_bringup" type="auto_map_explore.py" name="auto_mapper" output="screen">
+    <param name="duration_sec" value="$(arg duration_sec)" />
+    <param name="map_path" value="$(arg map_path)" />
+    <param name="linear_speed" value="$(arg linear_speed)" />
+    <param name="turn_speed" value="$(arg turn_speed)" />
+    <param name="save_map" value="$(arg save_map)" />
+    <param name="gmapping_quiet" value="$(arg gmapping_quiet)" />
+    <param name="gmapping_particles" value="$(arg particles)" />
+    <param name="gmapping_xmin" value="$(arg xmin)" />
+    <param name="gmapping_ymin" value="$(arg ymin)" />
+    <param name="gmapping_xmax" value="$(arg xmax)" />
+    <param name="gmapping_ymax" value="$(arg ymax)" />
+    <param name="gmapping_map_update_interval" value="$(arg map_update_interval)" />
+    <param name="gmapping_linear_update" value="$(arg linear_update)" />
+    <param name="gmapping_angular_update" value="$(arg angular_update)" />
+    <param name="gmapping_temporal_update" value="$(arg temporal_update)" />
+  </node>
+</launch>
