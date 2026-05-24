@@ -150,6 +150,8 @@ def main():
     rospy.Subscriber("/odom", Odometry, odom_cb, queue_size=5)
     rospy.Subscriber("/scan", LaserScan, scan_cb, queue_size=3)
     rospy.Subscriber("/simple_goal", PoseStamped, goal_cb, queue_size=1)
+    rospy.Subscriber("/goal_pose", PoseStamped, goal_cb, queue_size=1)
+    rospy.Subscriber("/move_base_simple/goal", PoseStamped, goal_cb, queue_size=1)
     rospy.Subscriber("/simple_nav/cancel", String, cancel_cb, queue_size=1)
 
     rate_hz = 30.0
