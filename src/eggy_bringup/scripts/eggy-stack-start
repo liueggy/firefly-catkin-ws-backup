@@ -1,0 +1,58 @@
+#!/bin/bash
+# Usage: eggy-stack-start [--nav | --navigation]
+set -eo pipefail
+
+USE_NAV=false
+for arg in "$@"; do
+  case "$arg" in
+    --nav|--navigation) USE_NAV=true ;;
+  esac
+done
+
+source /opt/ros/noetic/setup.bash
+source /root/catkin_ws/devel/setup.bash || true
+
+LOG_DIR=/var/log/eggy
+mkdir -p "$LOG_DIR"
+
+# Kill legacy split launch sessions/processes so this script is the only system entry point.
+for s in eggy_manual_map eggy_auto_map eggy_bag eggy_rosbridge eggy_simple_nav eggy_ros; do
+  tmux has-session -t "$s" 2>/dev/null && tmux kill-session -t "$s" || true
+done
+# Use multiple pkill calls instead of basic-regex alternation (| is literal in basic regex).
+for pat in \
+  "roslaunch.*rosbridge_server.*rosbridge_websocket" \
+  "roslaunch.*eggy_bringup.*robot\.launch" \
+  "roslaunch.*eggy_bringup.*eggy_system\.launch" \
+  "eggy_simple_navigator\.py" \
+  "ros_qt5_gui_adapter\.py" \
+  "/usr/local/bin/eggy-robot-agent" \
+  "eggy_robot_agent\.py"; do
+  pkill -TERM -f "$pat" 2>/dev/null || true
+done
+sleep 2
+for pat in \
+  "roslaunch.*rosbridge_server.*rosbridge_websocket" \
+  "roslaunch.*eggy_bringup.*robot\.launch" \
+  "roslaunch.*eggy_bringup.*eggy_system\.launch" \
+  "eggy_simple_navigator\.py" \
+  "ros_qt5_gui_adapter\.py" \
+  "/usr/local/bin/eggy-robot-agent" \
+  "eggy_robot_agent\.py"; do
+  pkill -KILL -f "$pat" 2>/dev/null || true
+done
+
+rm -f /tmp/eggy_system.log /tmp/eggy_ros_tmux.log /tmp/eggy_rosbridge.log
+
+# Unified launch includes: description, STM32 base, lidar, external IMU, odom fuser,
+# legacy IMU relay, simple navigator, Qt5 adapter, rosbridge, and robot agent.
+LAUNCH_ARGS="use_lidar:=true use_navigation:=$USE_NAV"
+tmux new-session -d -s eggy_ros "bash -lc 'source /opt/ros/noetic/setup.bash; source /root/catkin_ws/devel/setup.bash || true; exec roslaunch eggy_bringup eggy_system.launch $LAUNCH_ARGS 2>&1 | tee /tmp/eggy_system.log'"
+
+echo "[eggy-stack] waiting for unified launch topics (navigation=$USE_NAV)"
+timeout 80 bash -lc 'source /opt/ros/noetic/setup.bash; source /root/catkin_ws/devel/setup.bash || true; until rostopic echo -n1 /scan >/dev/null 2>&1 && rostopic echo -n1 /odom >/dev/null 2>&1 && rostopic echo -n1 /external_imu/imu/data_raw >/dev/null 2>&1; do sleep 2; done' || echo "[eggy-stack] WARN: some topics not ready within 80s"
+
+echo "[eggy-stack] status"
+tmux ls 2>/dev/null || true
+ss -lntp 2>/dev/null | grep -E ":9090|:11311" || true
+rosnode list 2>/dev/null || true

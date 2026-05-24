@@ -4,5 +4,5 @@
        - move_base path/costmap/footprint topics -> software default aliases
        - /battery/voltage Float32 -> /battery BatteryState
   -->
-  <node pkg="eggy_bringup" type="ros_qt5_gui_adapter.py" name="ros_qt5_gui_adapter" output="screen" respawn="true" />
+  <node pkg="eggy_bringup" type="ros_qt5_gui_adapter.py" name="ros_qt5_gui_adapter" output="screen" />
 </launch>

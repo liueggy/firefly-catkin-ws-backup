@@ -1,0 +1,27 @@
+#!/bin/bash
+set -eo pipefail
+source /opt/ros/noetic/setup.bash || true
+source /root/catkin_ws/devel/setup.bash || true
+rostopic pub -1 /cmd_vel geometry_msgs/Twist '{}' >/dev/null 2>&1 || true
+for s in eggy_manual_map eggy_auto_map eggy_bag eggy_rosbridge eggy_simple_nav eggy_ros; do
+  tmux has-session -t "$s" 2>/dev/null && tmux kill-session -t "$s" || true
+done
+# Use multiple pkill calls instead of basic-regex alternation (| is literal in basic regex).
+for pat in \
+  "roslaunch.*rosbridge_server.*rosbridge_websocket" \
+  "roslaunch.*eggy_bringup.*robot\.launch" \
+  "roslaunch.*eggy_bringup.*eggy_system\.launch" \
+  "rosmaster" "rosout" \
+  "rosbridge_websocket" \
+  "stm32_base_driver" \
+  "rplidarNode" \
+  "external_yb_imu" \
+  "eggy_external_imu_odom_fuser" \
+  "eggy_simple_navigator\.py" \
+  "ros_qt5_gui_adapter\.py" \
+  "topic_tools/relay" \
+  "/usr/local/bin/eggy-robot-agent" \
+  "eggy_robot_agent\.py"; do
+  pkill -TERM -f "$pat" 2>/dev/null || true
+done
+echo "eggy unified stack stopped"

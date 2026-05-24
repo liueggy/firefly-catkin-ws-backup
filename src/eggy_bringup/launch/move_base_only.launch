@@ -1,0 +1,18 @@
+<launch>
+  <!-- move_base for SLAM mode (no amcl/map_server — gmapping provides localization + /map).
+       Global costmap uses dynamic map (from gmapping) instead of static.
+  -->
+  <node name="move_base" pkg="move_base" type="move_base" output="screen">
+    <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/costmap_common_params.yaml" command="load" ns="global_costmap" />
+    <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/costmap_common_params.yaml" command="load" ns="local_costmap" />
+    <!-- use explore params (static_map: false, map_topic: /map) for live SLAM map -->
+    <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/global_costmap_explore_params.yaml" command="load" />
+    <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/local_costmap_params.yaml" command="load" />
+    <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/teb_local_planner_params.yaml" command="load" />
+    <param name="base_local_planner" value="teb_local_planner/TebLocalPlannerROS" />
+    <param name="controller_frequency" value="15.0" />
+    <param name="planner_frequency" value="5.0" />
+    <param name="conservative_reset_dist" value="0.5" />
+    <param name="clearing_rotation_allowed" value="true" />
+  </node>
+</launch>
