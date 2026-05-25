@@ -42,7 +42,7 @@ SLOW_RADIUS = float(os.environ.get("EGGY_SIMPLE_NAV_SLOW_RADIUS", "0.65"))
 FRONT_STOP = float(os.environ.get("EGGY_SIMPLE_NAV_FRONT_STOP", "0.24"))
 KP_DIST = float(os.environ.get("EGGY_SIMPLE_NAV_KP_DIST", "1.15"))
 KP_YAW = float(os.environ.get("EGGY_SIMPLE_NAV_KP_YAW", "1.20"))
-KEEP_FACE_TARGET = os.environ.get("EGGY_SIMPLE_NAV_FACE_TARGET", "1") not in ("0", "false", "False")
+KEEP_FACE_TARGET = os.environ.get("EGGY_SIMPLE_NAV_FACE_TARGET", "0") not in ("0", "false", "False")
 
 
 def norm_ang(a):
