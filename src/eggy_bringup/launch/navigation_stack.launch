@@ -1,0 +1,4 @@
+<launch>
+  <!-- Navigation stack for SLAM mode with GUI-compatible topics. -->
+  <include file="$(find eggy_bringup)/launch/move_base_only.launch" />
+</launch>

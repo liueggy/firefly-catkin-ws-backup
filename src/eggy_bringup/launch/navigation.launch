@@ -1,13 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
-  <!-- 导航 launch：加载地图 + amcl 定位 + move_base 路径规划 -->
-  
+  <!-- Map + AMCL + move_base for saved-map autonomous navigation. -->
   <arg name="map_file" default="/root/catkin_ws/maps/spin_map.yaml" />
-  
-  <!-- 地图服务器 -->
+
   <node name="map_server" pkg="map_server" type="map_server" args="$(arg map_file)" />
-  
-  <!-- AMCL 定位 -->
+
   <node name="amcl" pkg="amcl" type="amcl" output="screen">
     <param name="odom_frame_id" value="odom" />
     <param name="base_frame_id" value="base_link" />
@@ -21,23 +18,11 @@
     <param name="laser_max_range" value="8.0" />
     <param name="laser_min_range" value="0.15" />
     <param name="laser_max_beams" value="60" />
-    <param name="transform_tolerance" value="0.3" />
+    <param name="transform_tolerance" value="0.35" />
     <param name="initial_pose_x" value="0.0" />
     <param name="initial_pose_y" value="0.0" />
     <param name="initial_pose_a" value="0.0" />
   </node>
-  
-  <!-- move_base 路径规划 -->
-  <node name="move_base" pkg="move_base" type="move_base" output="screen">
-    <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/costmap_common_params.yaml" command="load" ns="global_costmap" />
-    <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/costmap_common_params.yaml" command="load" ns="local_costmap" />
-    <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/global_costmap_params.yaml" command="load" />
-    <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/local_costmap_params.yaml" command="load" />
-    <rosparam file="/root/catkin_ws/src/eggy_bringup/config/nav/teb_local_planner_params.yaml" command="load" />
-    <param name="base_local_planner" value="teb_local_planner/TebLocalPlannerROS" />
-    <param name="controller_frequency" value="15.0" />
-    <param name="planner_frequency" value="5.0" />
-    <param name="conservative_reset_dist" value="0.5" />
-    <param name="clearing_rotation_allowed" value="true" />
-  </node>
+
+  <include file="$(find eggy_bringup)/launch/move_base_only.launch" />
 </launch>

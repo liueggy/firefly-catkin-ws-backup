@@ -10,8 +10,8 @@
   <arg name="use_rosbridge" default="true" />
   <arg name="rosbridge_port" default="9090" />
   <arg name="use_robot_agent" default="true" />
-  <arg name="use_simple_nav" default="true" />
-  <arg name="use_navigation" default="false" />
+  <arg name="use_simple_nav" default="false" />
+  <arg name="use_navigation" default="true" />
   <arg name="use_qt5_adapter" default="true" />
   <arg name="use_mapping" default="true" />
   <arg name="mapping_autosave" default="false" />
