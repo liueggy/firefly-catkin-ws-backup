@@ -1,25 +1,21 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""Fuse wheel odometry translation with external IMU gyro-integrated yaw.
+# -*- coding: utf-8
+"""Fuse wheel_odom position with STM32 onboard MPU6050 gyro yaw.
 
-Manual-compliant external IMU usage:
-  - Official Euler 0x26: roll/pitch/yaw are float radians.
-  - Official Quaternion 0x16: Q0=w, Q1/Q2/Q3=x/y/z (handled in driver).
+Replaces external YB IMU with onboard MPU6050 for yaw tracking.
 
-Yaw policy for navigation:
-  - Initialize base yaw from official Euler yaw + pi mounting compensation.
-  - Then integrate external raw gyro.z from /external_imu/imu/data_raw.
-  - Do NOT continuously overwrite yaw with Euler/quaternion because measured
-    fused yaw can drift after rotation under magnetic/fusion influence.
+Yaw strategy:
+  1. On startup, calibrate gyro.z bias over ~50 samples (~2.5s).
+  2. Initialize base_yaw from wheel_odom quaternion.
+  3. Continuously integrate gyro.z (bias-corrected) for yaw.
+  4. Publish /odom = wheel_odom x/y + integrated gyro yaw.
+  5. Publish TF odom->base_link.
 
-Mounting:
-  Initial offset is configurable by ~imu_to_base_yaw_offset_deg.
-  2026-05-23 forward calibration measured +X motion vs yaw diff about -150 deg,
-  initial +30 deg was insufficient because wheel pose xy and IMU yaw were mixed.
-  Forward calibration showed yaw should be about -122.5 deg offset for current mounting.
-  Fuser integrates wheel odom *delta translation* in local wheel frame using external IMU yaw,
-  instead of copying wheel_odom.position directly. This keeps /odom x/y/yaw self-consistent.
-  A pure yaw mounting rotation does not invert gyro.z.
+Notes:
+  - STM32 firmware zeros gyro.z when Flag_Stop==1 (first ~10s after boot).
+  - STM32 already does zero-drift compensation, but we add a second-stage bias
+    calibration for extra precision.
+  - gyro.z sign: positive = counterclockwise (left turn).
 """
 import math
 import threading
@@ -27,35 +23,30 @@ import rospy
 import tf2_ros
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
-from std_msgs.msg import Float32
 from geometry_msgs.msg import TransformStamped
 
 lock = threading.RLock()
-latest_wheel = None
-latest_raw = None
-latest_euler_yaw = None
-latest_euler_time = None
-base_yaw = None
-last_raw_stamp = None
-last_raw_seq = None
-imu_to_base_yaw_offset = math.radians(5.0)
 
+latest_wheel = None
+base_yaw = None
+gyro_bias = None
+bias_sum = 0.0
+bias_count = 0
+BIAS_SAMPLES = 50
+last_stamp = None
 
 
 def norm_ang(a):
     return (a + math.pi) % (2.0 * math.pi) - math.pi
 
 
+def yaw_from_quat(q):
+    return math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                      1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+
+
 def quat_from_yaw(yaw):
     return (0.0, 0.0, math.sin(yaw * 0.5), math.cos(yaw * 0.5))
-
-
-def imu_yaw_to_base_yaw(imu_yaw):
-    return norm_ang(imu_yaw + imu_to_base_yaw_offset)
-
-
-def yaw_from_quat(q):
-    return math.atan2(2.0*(q.w*q.z + q.x*q.y), 1.0 - 2.0*(q.y*q.y + q.z*q.z))
 
 
 def wheel_cb(msg):
@@ -64,93 +55,96 @@ def wheel_cb(msg):
         latest_wheel = msg
 
 
-def euler_cb(msg):
-    global latest_euler_yaw, latest_euler_time
-    with lock:
-        latest_euler_yaw = float(msg.data)
-        latest_euler_time = rospy.Time.now().to_sec()
+def imu_cb(msg):
+    global base_yaw, gyro_bias, bias_sum, bias_count, last_stamp
+    gz = msg.angular_velocity.z
+    now = msg.header.stamp.to_sec() if msg.header.stamp.secs > 0 else rospy.Time.now().to_sec()
 
-
-def raw_cb(msg):
-    global latest_raw, base_yaw, last_raw_stamp, last_raw_seq
     with lock:
-        latest_raw = msg
-        now = rospy.Time.now().to_sec()
-        if base_yaw is None:
-            if latest_euler_yaw is not None and latest_euler_time is not None and now - latest_euler_time < 2.0:
-                base_yaw = imu_yaw_to_base_yaw(latest_euler_yaw)
-                rospy.loginfo('external IMU yaw initialized from official euler: imu=%.3f base=%.3f', latest_euler_yaw, base_yaw)
-            else:
-                return
-            last_raw_stamp = msg.header.stamp.to_sec() if msg.header.stamp else now
-            last_raw_seq = msg.header.seq
+        # Phase 1: calibrate gyro bias
+        if gyro_bias is None:
+            bias_sum += gz
+            bias_count += 1
+            if bias_count >= BIAS_SAMPLES:
+                gyro_bias = bias_sum / bias_count
+                # Initialize yaw from latest wheel_odom
+                if latest_wheel is not None:
+                    q = latest_wheel.pose.pose.orientation
+                    base_yaw = yaw_from_quat(q)
+                else:
+                    base_yaw = 0.0
+                last_stamp = now
+                rospy.loginfo('MPU6050 fuser ready: gyro_bias=%.6f rad/s, init_yaw=%.2f deg',
+                              gyro_bias, math.degrees(base_yaw))
             return
-        t = msg.header.stamp.to_sec() if msg.header.stamp else now
-        if last_raw_stamp is not None and msg.header.seq != last_raw_seq:
-            dt = t - last_raw_stamp
-            if 0.0 < dt < 0.2:
-                base_yaw = norm_ang(base_yaw + msg.angular_velocity.z * dt)
-        last_raw_stamp = t
-        last_raw_seq = msg.header.seq
+
+        # Phase 2: integrate gyro.z
+        dt = now - last_stamp
+        last_stamp = now
+        if dt <= 0 or dt > 0.2:
+            return
+        base_yaw = norm_ang(base_yaw + (gz - gyro_bias) * dt)
 
 
 def main():
-    global imu_to_base_yaw_offset
+    global base_yaw
     rospy.init_node('eggy_external_imu_odom_fuser')
-    imu_to_base_yaw_offset = math.radians(float(rospy.get_param('~imu_to_base_yaw_offset_deg', 5.0)))
+
     odom_frame = rospy.get_param('~odom_frame_id', 'odom')
     base_frame = rospy.get_param('~base_frame_id', 'base_link')
     wheel_topic = rospy.get_param('~wheel_odom_topic', '/wheel_odom')
-    raw_topic = rospy.get_param('~external_imu_raw_topic', '/external_imu/imu/data_raw')
-    euler_topic = rospy.get_param('~external_imu_euler_topic', '/external_imu/imu/euler')
+    imu_topic = rospy.get_param('~imu_topic', '/stm32/imu/data_raw')
     publish_tf = rospy.get_param('~publish_tf', True)
     rate_hz = float(rospy.get_param('~rate', 50.0))
 
     pub = rospy.Publisher('/odom', Odometry, queue_size=20)
     br = tf2_ros.TransformBroadcaster() if publish_tf else None
-    rospy.Subscriber(wheel_topic, Odometry, wheel_cb, queue_size=50)
-    rospy.Subscriber(euler_topic, Float32, euler_cb, queue_size=100)
-    rospy.Subscriber(raw_topic, Imu, raw_cb, queue_size=200)
 
-    rospy.loginfo('external IMU fuser active: wheel=%s raw=%s euler_init=%s -> /odom', wheel_topic, raw_topic, euler_topic)
-    rospy.loginfo('external imu yaw: euler rad init + offset %.1f deg, then gyro.z integration', math.degrees(imu_to_base_yaw_offset))
+    rospy.Subscriber(wheel_topic, Odometry, wheel_cb, queue_size=50)
+    rospy.Subscriber(imu_topic, Imu, imu_cb, queue_size=200)
+
+    rospy.loginfo('MPU6050 odom fuser: wheel=%s imu=%s rate=%.0fHz tf=%s',
+                  wheel_topic, imu_topic, rate_hz, publish_tf)
 
     rate = rospy.Rate(rate_hz)
     warned = False
+
     while not rospy.is_shutdown():
         with lock:
             w = latest_wheel
-            raw = latest_raw
             yaw = base_yaw
-        if w is None:
+
+        if w is None or yaw is None:
             if not warned:
-                rospy.logwarn('waiting for wheel odom and external IMU yaw init')
+                rospy.logwarn('waiting for wheel odom and MPU6050 gyro calib...')
                 warned = True
-            rate.sleep(); continue
+            rate.sleep()
+            continue
 
         now_t = rospy.Time.now()
-        q = (w.pose.pose.orientation.x, w.pose.pose.orientation.y, w.pose.pose.orientation.z, w.pose.pose.orientation.w)
+
         out = Odometry()
         out.header.stamp = now_t
         out.header.frame_id = odom_frame
         out.child_frame_id = base_frame
+        # Position from wheel_odom (x, y are reliable)
         out.pose.pose.position = w.pose.pose.position
-        out.pose.pose.orientation.x = q[0]
-        out.pose.pose.orientation.y = q[1]
-        out.pose.pose.orientation.z = q[2]
-        out.pose.pose.orientation.w = q[3]
+        # Orientation from integrated gyro yaw
+        qx, qy, qz, qw = quat_from_yaw(yaw)
+        out.pose.pose.orientation.x = qx
+        out.pose.pose.orientation.y = qy
+        out.pose.pose.orientation.z = qz
+        out.pose.pose.orientation.w = qw
         out.pose.covariance = w.pose.covariance
+        # Twist from wheel_odom
         out.twist.twist.linear = w.twist.twist.linear
-        if raw is not None:
-            out.twist.twist.angular.z = raw.angular_velocity.z
-        else:
-            out.twist.twist.angular = w.twist.twist.angular
+        out.twist.twist.angular.z = w.twist.twist.angular.z
         out.twist.covariance = w.twist.covariance
         pub.publish(out)
 
         if br:
             tr = TransformStamped()
-            tr.header.stamp = out.header.stamp
+            tr.header.stamp = now_t
             tr.header.frame_id = odom_frame
             tr.child_frame_id = base_frame
             tr.transform.translation.x = out.pose.pose.position.x
@@ -158,6 +152,7 @@ def main():
             tr.transform.translation.z = out.pose.pose.position.z
             tr.transform.rotation = out.pose.pose.orientation
             br.sendTransform(tr)
+
         rate.sleep()
 
 

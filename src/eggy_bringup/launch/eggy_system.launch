@@ -4,16 +4,38 @@
   <arg name="baudrate" default="115200" />
   <arg name="with_description" default="true" />
   <arg name="use_lidar" default="true" />
-  <arg name="use_external_imu" default="true" />
+  <arg name="use_external_imu" default="false" />
   <arg name="external_imu_port" default="/dev/ttyS4" />
   <arg name="external_imu_frame_id" default="imu_link" />
   <arg name="use_rosbridge" default="true" />
   <arg name="rosbridge_port" default="9090" />
-  <arg name="use_robot_agent" default="true" />
+  <arg name="use_robot_agent" default="false" />
   <arg name="use_simple_nav" default="false" />
   <arg name="use_navigation" default="true" />
   <arg name="use_qt5_adapter" default="true" />
+  <arg name="use_camera" default="true" />
+  <arg name="camera_device" default="/dev/orbbec_rgb23" />
+  <arg name="use_meter_rknn" default="true" />
+  <arg name="meter_model_path" default="/root/meter/best_raw_head_int8_toolkit150.rknn" />
+  <arg name="meter_image_topic" default="/camera/front/image_source/compressed" />
+  <arg name="meter_overlay_topic" default="/camera/front/image/compressed" />
+  <arg name="meter_result_topic" default="/meter/detection" />
+  <arg name="meter_conf" default="0.50" />
+  <arg name="meter_nms" default="0.45" />
+  <arg name="meter_max_det" default="2" />
+  <arg name="meter_frame_skip" default="1" />
+  <arg name="use_command_center" default="true" />
+  <arg name="use_usart1" default="true" />
+  <arg name="use_voice_controller" default="true" />
+  <arg name="usart1_port" default="/dev/eggy_usart1" />
+  <arg name="default_temperature" default="25.0" />
+  <arg name="default_humidity" default="50.0" />
+  <arg name="dht_publish_rate" default="1.0" />
+  <arg name="use_cpp_odom_fuser" default="true" />
+
   <arg name="use_mapping" default="true" />
+  <arg name="use_amcl" default="false" />
+  <arg name="map_file" default="/root/catkin_ws/maps/navigation/latest.yaml" />
   <arg name="mapping_autosave" default="false" />
 
   <group if="$(arg with_description)">
@@ -37,19 +59,51 @@
     </include>
   </group>
 
-  <node pkg="eggy_bringup" type="eggy_external_imu_odom_fuser.py" name="eggy_external_imu_odom_fuser" output="screen">
-    <param name="wheel_odom_topic" value="/wheel_odom" />
-    <param name="external_imu_topic" value="/external_imu/imu/data" />
-    <param name="external_imu_raw_topic" value="/external_imu/imu/data_raw" />
-    <param name="external_imu_euler_topic" value="/external_imu/imu/euler" />
-    <param name="odom_frame_id" value="odom" />
-    <param name="base_frame_id" value="base_link" />
-    <param name="publish_tf" value="true" />
-    <param name="rate" value="50.0" />
-  </node>
+  <!-- odom fuser: C++高性能版（默认）或 Python 兼容版 -->
+  <group if="$(arg use_cpp_odom_fuser)">
+    <node pkg="eggy_bringup" type="eggy_odom_fuser_node" name="eggy_external_imu_odom_fuser" output="screen">
+      <param name="wheel_odom_topic" value="/wheel_odom" />
+      <param name="imu_topic" value="/stm32/imu/data_raw" />
+      <param name="odom_frame_id" value="odom" />
+      <param name="base_frame_id" value="base_link" />
+      <param name="publish_tf" value="true" />
+      <param name="rate" value="50.0" />
+    </node>
+  </group>
+  <group unless="$(arg use_cpp_odom_fuser)">
+    <node pkg="eggy_bringup" type="eggy_external_imu_odom_fuser.py" name="eggy_external_imu_odom_fuser" output="screen">
+      <param name="wheel_odom_topic" value="/wheel_odom" />
+      <param name="imu_topic" value="/stm32/imu/data_raw" />
+      <param name="odom_frame_id" value="odom" />
+      <param name="base_frame_id" value="base_link" />
+      <param name="publish_tf" value="true" />
+      <param name="rate" value="50.0" />
+    </node>
+  </group>
 
-  <node pkg="topic_tools" type="relay" name="external_imu_to_legacy_imu_raw"
-        args="/external_imu/imu/data_raw /imu/data_raw" output="screen" />
+  <!-- Static map navigation localization: map_server + AMCL. Do not enable together with gmapping/use_mapping. -->
+  <group if="$(arg use_amcl)">
+    <node name="map_server" pkg="map_server" type="map_server" args="$(arg map_file)" />
+    <node name="amcl" pkg="amcl" type="amcl" output="screen">
+      <param name="odom_frame_id" value="odom" />
+      <param name="base_frame_id" value="base_link" />
+      <param name="global_frame_id" value="map" />
+      <param name="use_map_topic" value="true" />
+      <param name="odom_model_type" value="omni" />
+      <param name="min_particles" value="100" />
+      <param name="max_particles" value="500" />
+      <param name="update_min_d" value="0.10" />
+      <param name="update_min_a" value="0.20" />
+      <param name="laser_max_range" value="8.0" />
+      <param name="laser_min_range" value="0.15" />
+      <param name="laser_max_beams" value="60" />
+      <param name="transform_tolerance" value="0.35" />
+      <param name="initial_pose_x" value="0.0" />
+      <param name="initial_pose_y" value="0.0" />
+      <param name="initial_pose_a" value="0.0" />
+    </node>
+  </group>
+
 
   <!-- Navigation stack (move_base + TEB): full path planning, costmaps, footprint. -->
   <group if="$(arg use_navigation)">
@@ -65,6 +119,38 @@
 
   <group if="$(arg use_qt5_adapter)">
     <node pkg="eggy_bringup" type="ros_qt5_gui_adapter.py" name="ros_qt5_gui_adapter" output="screen" />
+  </group>
+
+  <!-- DISABLED 2026-06-01 (Eggy): Qt 客户端经 rosbridge 未订阅 /eggy_nav/status，关闭省内存/CPU
+  <node pkg="eggy_bringup" type="eggy_nav_monitor.py" name="eggy_nav_monitor" output="screen">
+    <param name="rate" value="5.0" />
+  </node>
+  -->
+
+  <group if="$(arg use_camera)">
+    <node pkg="eggy_bringup" type="eggy_camera_node.py" name="eggy_camera" output="screen">
+      <param name="device" value="$(arg camera_device)" />
+      <param name="width" value="640" />
+      <param name="height" value="480" />
+      <param name="fps" value="15" />
+      <param name="pixel_format" value="mjpg" />
+      <param name="mjpeg_passthrough" value="true" />
+      <param name="compressed_topic" value="/camera/front/image_source/compressed" />
+    </node>
+  </group>
+
+
+  <group if="$(arg use_meter_rknn)">
+    <node pkg="eggy_bringup" type="meter_rknn_detect_node" name="meter_rknn_detect_cpp" output="screen" respawn="true" respawn_delay="3.0">
+      <param name="model_path" value="$(arg meter_model_path)" />
+      <param name="image_topic" value="$(arg meter_image_topic)" />
+      <param name="overlay_comp_topic" value="$(arg meter_overlay_topic)" />
+      <param name="result_topic" value="$(arg meter_result_topic)" />
+      <param name="conf" value="$(arg meter_conf)" />
+      <param name="nms" value="$(arg meter_nms)" />
+      <param name="max_det" value="$(arg meter_max_det)" />
+      <param name="frame_skip" value="$(arg meter_frame_skip)" />
+    </node>
   </group>
 
   <group if="$(arg use_mapping)">
@@ -85,4 +171,42 @@
   <group if="$(arg use_robot_agent)">
     <node pkg="eggy_bringup" type="eggy_robot_agent.py" name="eggy_robot_agent" output="screen" />
   </group>
+
+  <!-- eggy_command_center: Qt 调试命令中心，提供模块状态/控制/参数配置反馈通道 -->
+  <group if="$(arg use_command_center)">
+    <node pkg="eggy_bringup" type="eggy_command_center.py" name="eggy_command_center" output="screen">
+      <param name="status_rate" value="0.2" />
+      <param name="allow_shell" value="false" />
+    </node>
+  </group>
+
+  <!-- eggy_usart1_node: STM32 USART1 数据接收 (DHT11 温湿度 + 语音模块转发) -->
+  <group if="$(arg use_usart1)">
+    <node pkg="eggy_bringup" type="eggy_usart1_node.py" name="eggy_usart1_node" output="screen">
+      <param name="port" value="$(arg usart1_port)" />
+      <param name="baudrate" value="115200" />
+      <param name="default_temperature" value="$(arg default_temperature)" />
+      <param name="default_humidity" value="$(arg default_humidity)" />
+      <param name="dht_publish_rate" value="$(arg dht_publish_rate)" />
+    </node>
+  </group>
+
+  <!-- eggy_voice_controller: 语音指令绑定小车控制 -->
+  <group if="$(arg use_voice_controller)">
+    <node pkg="eggy_bringup" type="eggy_voice_controller.py" name="eggy_voice_controller" output="screen">
+      <param name="forward_speed" value="0.6" />
+      <param name="backward_speed" value="0.5" />
+      <param name="turn_speed" value="1.2" />
+      <param name="rotate_speed" value="2.0" />
+      <param name="forward_duration" value="3.0" />
+      <param name="backward_duration" value="3.0" />
+      <param name="turn_duration" value="3.0" />
+      <param name="rotate_duration" value="3.0" />
+    </node>
+  </group>
+
+  <!-- eggy_health_aggregator: 聚合健康监控 CPU/内存/温度/节点/电池/激光/里程计/急停/导航 -->
+  <node pkg="eggy_bringup" type="eggy_health_aggregator.py" name="eggy_health_aggregator" output="screen">
+    <param name="rate" value="1.0" />
+  </node>
 </launch>

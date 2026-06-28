@@ -1,7 +1,7 @@
 <launch>
-  <!-- move_base for SLAM mode: TEB local planner + GUI topic bridge -->
-  <arg name="controller_frequency" default="10.0" />
-  <arg name="planner_frequency" default="1.5" />
+  <!-- move_base for static-map navigation: TEB local planner, static_map true -->
+  <arg name="controller_frequency" default="12.0" />
+  <arg name="planner_frequency" default="1.0" />
 
   <node name="move_base" pkg="move_base" type="move_base" output="screen" respawn="false">
     <rosparam file="$(find eggy_bringup)/config/nav/costmap_common_params.yaml" command="load" ns="global_costmap" />
@@ -22,6 +22,11 @@
     <param name="oscillation_distance" value="0.3" />
     <param name="max_planning_retries" value="4" />
 
+    <rosparam param="global_costmap">
+      static_map: true
+      rolling_window: false
+    </rosparam>
+
     <rosparam>
 recovery_behavior_enabled: true
 recovery_behaviors:
@@ -41,25 +46,4 @@ rotate_recovery:
     <remap from="cmd_vel" to="/cmd_vel" />
     <remap from="move_base_simple/goal" to="/nav_goal" />
   </node>
-
-  <!-- GUI topic bridge: move_base → Qt5 app compatible topics -->
-  <!-- DISABLED 2026-06-01 (Eggy): Qt 经 rosbridge 直接订阅 adapter 发的 /plan /local_plan /*_costmap/costmap，
-       这4个 relay 转发的 /global_path /local_path /global_costmap /local_costmap 无订阅者(死链)，关闭省内存
-  <node pkg="topic_tools" type="relay" name="gui_global_path"
-        args="/move_base/NavfnROS/plan /global_path" output="screen" />
-  <node pkg="topic_tools" type="relay" name="gui_local_path"
-        args="/move_base/TebLocalPlannerROS/local_plan /local_path" output="screen" />
-  <node pkg="topic_tools" type="relay" name="gui_global_costmap"
-        args="/move_base/global_costmap/costmap /global_costmap" output="screen" />
-  <node pkg="topic_tools" type="relay" name="gui_local_costmap"
-        args="/move_base/local_costmap/costmap /local_costmap" output="screen" />
-  -->
-  <!-- DISABLED 2026-06-01 (Eggy): adapter 已直接发 /nav_goal，relay 中转不再需要 (简化目标点链路)
-  <node pkg="topic_tools" type="relay" name="legacy_move_base_simple_goal"
-        args="/move_base_simple/goal /nav_goal" output="screen" />
-  -->
-  <!-- DISABLED 2026-06-01 (Eggy): /simple_goal 无订阅者(simple_navigator 已停用)，关闭省内存
-  <node pkg="topic_tools" type="relay" name="simple_goal_from_nav_goal"
-        args="/nav_goal /simple_goal" output="screen" />
-  -->
 </launch>

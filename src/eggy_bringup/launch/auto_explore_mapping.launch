@@ -1,0 +1,49 @@
+<launch>
+  <arg name="duration_sec" default="180.0" />
+  <arg name="linear_speed" default="0.16" />
+  <arg name="turn_speed" default="0.45" />
+  <arg name="backup_speed" default="0.08" />
+  <arg name="min_front_clearance" default="0.42" />
+  <arg name="slow_front_clearance" default="0.75" />
+  <arg name="side_clearance" default="0.32" />
+  <arg name="stop_clearance" default="0.26" />
+  <arg name="stuck_timeout" default="2.5" />
+  <arg name="save_map" default="true" />
+  <arg name="map_path" default="/root/catkin_ws/maps/auto_explore_map" />
+  <arg name="start_gmapping" default="false" />
+  <arg name="gmapping_startup_delay" default="3.0" />
+  <arg name="gmapping_particles" default="25" />
+  <arg name="gmapping_xmin" default="-12.0" />
+  <arg name="gmapping_ymin" default="-12.0" />
+  <arg name="gmapping_xmax" default="12.0" />
+  <arg name="gmapping_ymax" default="12.0" />
+  <arg name="gmapping_map_update_interval" default="2.0" />
+  <arg name="gmapping_linear_update" default="0.20" />
+  <arg name="gmapping_angular_update" default="0.20" />
+  <arg name="gmapping_temporal_update" default="2.0" />
+
+  <node pkg="eggy_bringup" type="auto_map_explore.py" name="auto_mapper" output="screen">
+    <param name="duration_sec" value="$(arg duration_sec)" />
+    <param name="linear_speed" value="$(arg linear_speed)" />
+    <param name="turn_speed" value="$(arg turn_speed)" />
+    <param name="backup_speed" value="$(arg backup_speed)" />
+    <param name="min_front_clearance" value="$(arg min_front_clearance)" />
+    <param name="slow_front_clearance" value="$(arg slow_front_clearance)" />
+    <param name="side_clearance" value="$(arg side_clearance)" />
+    <param name="stop_clearance" value="$(arg stop_clearance)" />
+    <param name="stuck_timeout" value="$(arg stuck_timeout)" />
+    <param name="save_map" value="$(arg save_map)" />
+    <param name="map_path" value="$(arg map_path)" />
+    <param name="start_gmapping" value="$(arg start_gmapping)" />
+    <param name="gmapping_startup_delay" value="$(arg gmapping_startup_delay)" />
+    <param name="gmapping_particles" value="$(arg gmapping_particles)" />
+    <param name="gmapping_xmin" value="$(arg gmapping_xmin)" />
+    <param name="gmapping_ymin" value="$(arg gmapping_ymin)" />
+    <param name="gmapping_xmax" value="$(arg gmapping_xmax)" />
+    <param name="gmapping_ymax" value="$(arg gmapping_ymax)" />
+    <param name="gmapping_map_update_interval" value="$(arg gmapping_map_update_interval)" />
+    <param name="gmapping_linear_update" value="$(arg gmapping_linear_update)" />
+    <param name="gmapping_angular_update" value="$(arg gmapping_angular_update)" />
+    <param name="gmapping_temporal_update" value="$(arg gmapping_temporal_update)" />
+  </node>
+</launch>

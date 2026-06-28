@@ -1,0 +1,13 @@
+{
+  "route": [
+    {
+      "id": "example_point_1",
+      "frame_id": "map",
+      "x": 0.0,
+      "y": 0.0,
+      "yaw": 0.0,
+      "target": "any",
+      "desired_bbox_height_px": 120
+    }
+  ]
+}

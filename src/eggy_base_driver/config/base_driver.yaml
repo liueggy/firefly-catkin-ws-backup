@@ -16,8 +16,8 @@ publish_tf: false
 acc_lsb_per_g: 16384.0
 standard_gravity: 9.80665
 
-# 陀螺仪量程需以后结合固件初始化确认。默认先按 ±2000 dps 的 16.4 LSB/(deg/s)。
-gyro_lsb_per_deg_s: 16.4
+# 陀螺仪量程需以后结合固件初始化确认。固件 MPU6050 配置为 ±500 dps，灵敏度 65.536 LSB/(deg/s)。
+gyro_lsb_per_deg_s: 65.536
 
 # cmd_vel 安全限幅。真实底层固件仍有自身限幅。
 max_linear_x: 0.5

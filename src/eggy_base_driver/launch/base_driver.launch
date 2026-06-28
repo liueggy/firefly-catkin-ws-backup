@@ -13,6 +13,7 @@
     <param name="baudrate" value="$(arg baudrate)" />
     <remap from="odom" to="/wheel_odom" />
     <remap from="imu/data_raw" to="/stm32/imu/data_raw" />
+    <remap from="diagnostics" to="/stm32/diagnostics" />
   </node>
 
   <node if="$(arg use_python_debug_driver)"
@@ -25,5 +26,6 @@
     <param name="baudrate" value="$(arg baudrate)" />
     <remap from="odom" to="/wheel_odom" />
     <remap from="imu/data_raw" to="/stm32/imu/data_raw" />
+    <remap from="diagnostics" to="/stm32/diagnostics" />
   </node>
 </launch>

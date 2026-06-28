@@ -9,8 +9,8 @@ class RosQt5GuiAdapter:
     def __init__(self):
         self.voltage = None
         self.battery_pub = rospy.Publisher('/battery', BatteryState, queue_size=1, latch=True)
-        self.goal_pub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=1)
-        self.simple_goal_pub = rospy.Publisher('/simple_goal', PoseStamped, queue_size=1)
+        # 简化目标点链路 2026-06-01: 直接发 move_base 监听的 /nav_goal，省掉 legacy relay 中转
+        self.goal_pub = rospy.Publisher('/nav_goal', PoseStamped, queue_size=1)
         self.plan_pub = rospy.Publisher('/plan', Path, queue_size=1, latch=True)
         self.local_plan_pub = rospy.Publisher('/local_plan', Path, queue_size=1, latch=True)
         self.global_costmap_pub = rospy.Publisher('/global_costmap/costmap', OccupancyGrid, queue_size=1, latch=True)
@@ -27,17 +27,15 @@ class RosQt5GuiAdapter:
         rospy.Subscriber('/move_base/local_costmap/footprint', PolygonStamped, self.footprint_pub.publish, queue_size=1)
 
     def on_goal(self, msg):
-        # Ros_Qt5_Gui_App default /goal_pose -> ROS1 move_base default /move_base_simple/goal
+        # Qt /goal_pose -> 直接转发到 move_base 监听的 /nav_goal (单跳)
         self.goal_pub.publish(msg)
-        # Also forward to /simple_goal for eggy_simple_navigator (when move_base is not running)
-        self.simple_goal_pub.publish(msg)
 
     def on_voltage(self, msg):
         bs = BatteryState()
         bs.header.stamp = rospy.Time.now()
         bs.voltage = float(msg.data)
         # Unknown capacity/current on this base. Keep percentage NaN per BatteryState convention.
-        bs.percentage = float('nan')
+        bs.percentage = min(float(msg.data) / 12.0, 1.0)
         bs.power_supply_status = BatteryState.POWER_SUPPLY_STATUS_UNKNOWN
         bs.power_supply_health = BatteryState.POWER_SUPPLY_HEALTH_UNKNOWN
         bs.power_supply_technology = BatteryState.POWER_SUPPLY_TECHNOLOGY_UNKNOWN

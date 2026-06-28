@@ -1,0 +1,26 @@
+<launch>
+  <arg name="scan_topic" default="/scan" />
+  <arg name="odom_frame_id" default="odom" />
+  <arg name="base_frame_id" default="base_link" />
+  <arg name="map" default="/map" />
+
+  <node name="amcl" pkg="amcl" type="amcl" output="screen">
+    <remap from="scan" to="$(arg scan_topic)" />
+    <param name="odom_frame_id" value="$(arg odom_frame_id)" />
+    <param name="base_frame_id" value="$(arg base_frame_id)" />
+    <param name="global_frame_id" value="map" />
+    <param name="use_map_topic" value="true" />
+    <param name="odom_model_type" value="omni" />
+    <param name="min_particles" value="100" />
+    <param name="max_particles" value="500" />
+    <param name="update_min_d" value="0.10" />
+    <param name="update_min_a" value="0.20" />
+    <param name="laser_max_range" value="8.0" />
+    <param name="laser_min_range" value="0.15" />
+    <param name="laser_max_beams" value="60" />
+    <param name="transform_tolerance" value="0.35" />
+    <param name="initial_pose_x" value="0.0" />
+    <param name="initial_pose_y" value="0.0" />
+    <param name="initial_pose_a" value="0.0" />
+  </node>
+</launch>

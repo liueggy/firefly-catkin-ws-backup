@@ -71,6 +71,7 @@ simple_goal_pub = None
 simple_cancel_pub = None
 auto_exploring = False
 simple_nav_status = "idle"
+nav_monitor_status = None
 tf_listener = None
 
 
@@ -163,6 +164,16 @@ def simple_nav_status_cb(msg):
     global simple_nav_status
     simple_nav_status = getattr(msg, "data", "") or "idle"
     mark("/simple_nav/status")
+
+
+def nav_monitor_status_cb(msg):
+    global nav_monitor_status
+    raw = getattr(msg, "data", "") or ""
+    try:
+        nav_monitor_status = json.loads(raw)
+    except Exception:
+        nav_monitor_status = {"raw": raw[:500]}
+    mark("/eggy_nav/status")
 
 
 def compute_map_signature(values, width, height):
@@ -485,6 +496,7 @@ def nav_view():
         occ = dict(state.get("map_preview") or empty_occ())
         last = dict(state.get("last", {}))
         logs = list(recent_logs[:8])
+        nav_status_detail = nav_monitor_status
 
     if occ.get("age_sec") is not None and last.get("/map"):
         occ["age_sec"] = round(now() - last.get("/map"), 2)
@@ -513,7 +525,8 @@ def nav_view():
         "imu": now() - last.get("/imu/data_raw", 0) < 2,
         "lidar": now() - last.get("/scan", 0) < 2,
         "map": now() - last.get("/map", 0) < 8,
-        "navigation": (last.get("/navigation", 0) and now() - last.get("/navigation", 0) < 60),
+        "navigation": (last.get("/navigation", 0) and now() - last.get("/navigation", 0) < 60) or (last.get("/eggy_nav/status", 0) and now() - last.get("/eggy_nav/status", 0) < 2),
+        "nav_monitor_age_sec": round(now() - last.get("/eggy_nav/status", 0), 2) if last.get("/eggy_nav/status") else None,
         "simple_nav_status": simple_nav_status,
         "diagnostics": False,
         "robot_id": ROBOT_ID,
@@ -540,7 +553,8 @@ def nav_view():
         "global_plan": [],
         "local_plan": [],
         "goal": {"x": 0, "y": 0, "yaw": 0},
-        "nav_status": "ACTIVE" if sysinfo["base"] else "NO_ODOM",
+        "nav_status": nav_status_detail.get("move_base", {}).get("state", "ACTIVE") if nav_status_detail else ("ACTIVE" if sysinfo["base"] else "NO_ODOM"),
+        "nav_detail": nav_status_detail,
         "battery": batt,
         "summary": summary,
         "system": sysinfo,
@@ -745,6 +759,7 @@ def main():
     rospy.Subscriber("/battery/voltage", Float32, battery_cb, queue_size=3)
     rospy.Subscriber("/imu/data_raw", Imu, imu_cb, queue_size=5)
     rospy.Subscriber("/simple_nav/status", String, simple_nav_status_cb, queue_size=10)
+    rospy.Subscriber("/eggy_nav/status", String, nav_monitor_status_cb, queue_size=3)
     add_log("INFO", "Eggy rospy preview agent cloud=%s max_dim=%s map_period=%ss" % (CLOUD_URL, MAP_MAX_DIM, MAP_MIN_PERIOD))
     # sync auto_exploring flag with existing tmux session
     import subprocess as _sp
