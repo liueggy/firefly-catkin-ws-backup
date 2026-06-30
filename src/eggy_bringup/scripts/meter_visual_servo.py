@@ -33,10 +33,14 @@ class MeterVisualServo:
         self.require_scan = bool(rospy.get_param("~require_scan", True))
 
         self.area_tolerance = float(rospy.get_param("~area_tolerance", 0.12))
-        self.max_linear = float(rospy.get_param("~max_linear", 0.12))
-        self.min_linear = float(rospy.get_param("~min_linear", 0.035))
-        self.search_wz = float(rospy.get_param("~search_wz", 0.22))
-        self.cmd_rate = float(rospy.get_param("~cmd_rate", 10.0))
+        self.max_linear = float(rospy.get_param("~max_linear", 0.22))
+        self.min_linear = float(rospy.get_param("~min_linear", 0.055))
+        self.linear_gain = float(rospy.get_param("~linear_gain", 0.28))
+        self.max_angular = float(rospy.get_param("~max_angular", 0.42))
+        self.center_kp = float(rospy.get_param("~center_kp", 0.55))
+        self.center_deadband = float(rospy.get_param("~center_deadband", 0.06))
+        self.search_wz = float(rospy.get_param("~search_wz", 0.45))
+        self.cmd_rate = float(rospy.get_param("~cmd_rate", 20.0))
         self.detection_timeout = float(rospy.get_param("~detection_timeout", 0.8))
         self.scan_timeout = float(rospy.get_param("~scan_timeout", 1.0))
         self.obstacle_stop = float(rospy.get_param("~obstacle_stop", 0.35))
@@ -48,6 +52,8 @@ class MeterVisualServo:
         self.targets = self.load_targets()
         self.last_detection = None
         self.last_detection_time = 0.0
+        self.last_detection_msg_time = 0.0
+        self.last_target_visible = False
         self.last_center_error = 0.0
         self.scan = None
         self.scan_time = 0.0
@@ -97,11 +103,14 @@ class MeterVisualServo:
 
     def on_detection(self, msg):
         try:
+            now = time.time()
+            self.last_detection_msg_time = now
             payload = json.loads(msg.data)
             detections = payload.get("detections") or []
             image_width = float(payload.get("image_width") or 0)
             image_height = float(payload.get("image_height") or 0)
             if not detections or image_width <= 0 or image_height <= 0:
+                self.last_target_visible = False
                 return
 
             valid = []
@@ -131,11 +140,13 @@ class MeterVisualServo:
                     "edge_touch": edge_touch,
                 })
             if not valid:
+                self.last_target_visible = False
                 return
             # Prefer the most confident current meter/gauge; use class-specific target size.
             best = sorted(valid, key=lambda d: d["score"], reverse=True)[0]
             self.last_detection = best
-            self.last_detection_time = time.time()
+            self.last_detection_time = now
+            self.last_target_visible = True
             self.last_center_error = best["center_error"]
         except Exception as exc:
             rospy.logwarn_throttle(2.0, "bad detection message: %s", exc)
@@ -191,11 +202,20 @@ class MeterVisualServo:
         if not self.enabled:
             return Twist(), "disabled", {}
 
-        if self.last_detection is None or now - self.last_detection_time > self.detection_timeout:
+        fresh_empty_frame = (
+            self.last_detection is not None
+            and not self.last_target_visible
+            and now - self.last_detection_msg_time <= self.detection_timeout
+        )
+        stale_target = self.last_detection is None or now - self.last_detection_time > self.detection_timeout
+        if fresh_empty_frame or stale_target:
             cmd = Twist()
             if abs(self.last_center_error) > 0.05:
                 cmd.angular.z = self.search_wz if self.last_center_error < 0 else -self.search_wz
-                return cmd, "searching_lost_target", {"last_center_error": self.last_center_error}
+                return cmd, "searching_lost_target", {
+                    "last_center_error": round(self.last_center_error, 4),
+                    "reason": "empty_frame" if fresh_empty_frame else "timeout",
+                }
             return cmd, "no_target", {}
 
         det = self.last_detection
@@ -211,13 +231,15 @@ class MeterVisualServo:
                 "center_error": round(det["center_error"], 4),
             }
 
-        linear = clamp(0.16 * area_error, -self.max_linear, self.max_linear)
+        linear = clamp(self.linear_gain * area_error, -self.max_linear, self.max_linear)
         if abs(linear) < self.min_linear:
             linear = self.min_linear if area_error > 0 else -self.min_linear
         linear, safety = self.safe_linear(linear)
 
         cmd = Twist()
         cmd.linear.x = linear
+        if abs(det["center_error"]) > self.center_deadband:
+            cmd.angular.z = clamp(-self.center_kp * det["center_error"], -self.max_angular, self.max_angular)
         state = "servo_forward" if linear > 0 else "servo_backward" if linear < 0 else "blocked"
         return cmd, state, {
             "class_name": det["class_name"],
@@ -225,6 +247,7 @@ class MeterVisualServo:
             "target_area_ratio": round(target, 5),
             "area_error": round(area_error, 4),
             "center_error": round(det["center_error"], 4),
+            "angular_z": round(cmd.angular.z, 4),
             "safety": safety,
         }
 
