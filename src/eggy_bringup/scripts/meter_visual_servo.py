@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Visual servo for keeping meter/gauge detection box at a calibrated size.
+
+This node is intentionally standalone. It does not modify existing navigation
+nodes and only publishes /cmd_vel while it is running and enabled.
+"""
+
+import json
+import math
+import os
+import time
+
+import rospy
+from geometry_msgs.msg import Twist
+from sensor_msgs.msg import LaserScan
+from std_msgs.msg import String
+
+
+def clamp(value, low, high):
+    return max(low, min(high, value))
+
+
+class MeterVisualServo:
+    def __init__(self):
+        self.detection_topic = rospy.get_param("~detection_topic", "/meter/detection")
+        self.scan_topic = rospy.get_param("~scan_topic", "/scan")
+        self.target_file = rospy.get_param(
+            "~target_file",
+            "/root/catkin_ws/src/eggy_bringup/config/meter_visual_servo_target.json",
+        )
+        self.enabled = bool(rospy.get_param("~enabled", True))
+        self.require_scan = bool(rospy.get_param("~require_scan", True))
+
+        self.area_tolerance = float(rospy.get_param("~area_tolerance", 0.12))
+        self.max_linear = float(rospy.get_param("~max_linear", 0.12))
+        self.min_linear = float(rospy.get_param("~min_linear", 0.035))
+        self.search_wz = float(rospy.get_param("~search_wz", 0.22))
+        self.cmd_rate = float(rospy.get_param("~cmd_rate", 10.0))
+        self.detection_timeout = float(rospy.get_param("~detection_timeout", 0.8))
+        self.scan_timeout = float(rospy.get_param("~scan_timeout", 1.0))
+        self.obstacle_stop = float(rospy.get_param("~obstacle_stop", 0.35))
+        self.obstacle_slow = float(rospy.get_param("~obstacle_slow", 0.55))
+        self.front_sector_deg = float(rospy.get_param("~front_sector_deg", 28.0))
+        self.rear_sector_deg = float(rospy.get_param("~rear_sector_deg", 28.0))
+        self.edge_lost_margin = float(rospy.get_param("~edge_lost_margin", 0.04))
+
+        self.targets = self.load_targets()
+        self.last_detection = None
+        self.last_detection_time = 0.0
+        self.last_center_error = 0.0
+        self.scan = None
+        self.scan_time = 0.0
+        self.last_state = ""
+
+        self.cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
+        self.status_pub = rospy.Publisher("/meter_visual_servo/status", String, queue_size=1, latch=True)
+        rospy.Subscriber(self.detection_topic, String, self.on_detection, queue_size=5)
+        rospy.Subscriber(self.scan_topic, LaserScan, self.on_scan, queue_size=1)
+        rospy.Subscriber("/meter_visual_servo/request", String, self.on_request, queue_size=5)
+
+        rospy.loginfo("meter_visual_servo ready enabled=%s target_file=%s targets=%s",
+                      self.enabled, self.target_file, self.targets)
+        self.publish_status("ready", "node ready")
+
+    def load_targets(self):
+        default = {
+            "pressure_gauge": 0.0375,
+            "water_meter": 0.1477,
+            "default": 0.08,
+        }
+        if not os.path.exists(self.target_file):
+            return default
+        try:
+            with open(self.target_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            targets = data.get("target_area_ratio") or data
+            for key, value in default.items():
+                targets.setdefault(key, value)
+            return targets
+        except Exception as exc:
+            rospy.logwarn("failed to load target file %s: %s", self.target_file, exc)
+            return default
+
+    def on_request(self, msg):
+        text = (msg.data or "").strip().lower()
+        if text in ("start", "enable", "on"):
+            self.enabled = True
+            self.publish_status("enabled", "servo enabled")
+        elif text in ("stop", "disable", "off"):
+            self.enabled = False
+            self.stop_robot()
+            self.publish_status("disabled", "servo disabled")
+        elif text in ("reload", "reload_target"):
+            self.targets = self.load_targets()
+            self.publish_status("reloaded", "target file reloaded")
+
+    def on_detection(self, msg):
+        try:
+            payload = json.loads(msg.data)
+            detections = payload.get("detections") or []
+            image_width = float(payload.get("image_width") or 0)
+            image_height = float(payload.get("image_height") or 0)
+            if not detections or image_width <= 0 or image_height <= 0:
+                return
+
+            valid = []
+            for det in detections:
+                cls = str(det.get("class_name", ""))
+                if cls not in ("pressure_gauge", "water_meter"):
+                    continue
+                x1, y1 = float(det["x1"]), float(det["y1"])
+                x2, y2 = float(det["x2"]), float(det["y2"])
+                w, h = max(0.0, x2 - x1), max(0.0, y2 - y1)
+                if w <= 1 or h <= 1:
+                    continue
+                area_ratio = (w * h) / (image_width * image_height)
+                cx = (x1 + x2) * 0.5
+                center_error = (cx - image_width * 0.5) / (image_width * 0.5)
+                edge_touch = (
+                    x1 <= image_width * self.edge_lost_margin
+                    or x2 >= image_width * (1.0 - self.edge_lost_margin)
+                    or y1 <= image_height * self.edge_lost_margin
+                    or y2 >= image_height * (1.0 - self.edge_lost_margin)
+                )
+                valid.append({
+                    "class_name": cls,
+                    "score": float(det.get("score", 0.0)),
+                    "area_ratio": area_ratio,
+                    "center_error": center_error,
+                    "edge_touch": edge_touch,
+                })
+            if not valid:
+                return
+            # Prefer the most confident current meter/gauge; use class-specific target size.
+            best = sorted(valid, key=lambda d: d["score"], reverse=True)[0]
+            self.last_detection = best
+            self.last_detection_time = time.time()
+            self.last_center_error = best["center_error"]
+        except Exception as exc:
+            rospy.logwarn_throttle(2.0, "bad detection message: %s", exc)
+
+    def on_scan(self, msg):
+        self.scan = msg
+        self.scan_time = time.time()
+
+    def sector_min(self, center_deg, half_width_deg):
+        if self.scan is None:
+            return None
+        ranges = self.scan.ranges
+        if not ranges:
+            return None
+        amin = self.scan.angle_min
+        inc = self.scan.angle_increment
+        best = None
+        center = math.radians(center_deg)
+        half = math.radians(half_width_deg)
+        for i, r in enumerate(ranges):
+            if not math.isfinite(r):
+                continue
+            angle = amin + i * inc
+            delta = math.atan2(math.sin(angle - center), math.cos(angle - center))
+            if abs(delta) <= half and self.scan.range_min <= r <= self.scan.range_max:
+                best = r if best is None else min(best, r)
+        return best
+
+    def scan_fresh(self):
+        return self.scan is not None and time.time() - self.scan_time <= self.scan_timeout
+
+    def safe_linear(self, linear_x):
+        if abs(linear_x) < 1e-5:
+            return 0.0, "clear"
+        if self.require_scan and not self.scan_fresh():
+            return 0.0, "waiting_scan"
+        if linear_x > 0:
+            dist = self.sector_min(0.0, self.front_sector_deg)
+            direction = "front"
+        else:
+            dist = self.sector_min(180.0, self.rear_sector_deg)
+            direction = "rear"
+        if dist is None:
+            return (0.0, "no_%s_scan" % direction) if self.require_scan else (linear_x * 0.5, "no_scan_slow")
+        if dist < self.obstacle_stop:
+            return 0.0, "%s_obstacle_stop_%.2f" % (direction, dist)
+        if dist < self.obstacle_slow:
+            return linear_x * 0.45, "%s_obstacle_slow_%.2f" % (direction, dist)
+        return linear_x, "clear_%.2f" % dist
+
+    def compute_cmd(self):
+        now = time.time()
+        if not self.enabled:
+            return Twist(), "disabled", {}
+
+        if self.last_detection is None or now - self.last_detection_time > self.detection_timeout:
+            cmd = Twist()
+            if abs(self.last_center_error) > 0.05:
+                cmd.angular.z = self.search_wz if self.last_center_error < 0 else -self.search_wz
+                return cmd, "searching_lost_target", {"last_center_error": self.last_center_error}
+            return cmd, "no_target", {}
+
+        det = self.last_detection
+        target = float(self.targets.get(det["class_name"], self.targets.get("default", 0.08)))
+        area = det["area_ratio"]
+        area_error = (target - area) / max(target, 1e-6)
+
+        if abs(area_error) <= self.area_tolerance and not det["edge_touch"]:
+            return Twist(), "target_size_reached", {
+                "class_name": det["class_name"],
+                "area_ratio": round(area, 5),
+                "target_area_ratio": round(target, 5),
+                "center_error": round(det["center_error"], 4),
+            }
+
+        linear = clamp(0.16 * area_error, -self.max_linear, self.max_linear)
+        if abs(linear) < self.min_linear:
+            linear = self.min_linear if area_error > 0 else -self.min_linear
+        linear, safety = self.safe_linear(linear)
+
+        cmd = Twist()
+        cmd.linear.x = linear
+        state = "servo_forward" if linear > 0 else "servo_backward" if linear < 0 else "blocked"
+        return cmd, state, {
+            "class_name": det["class_name"],
+            "area_ratio": round(area, 5),
+            "target_area_ratio": round(target, 5),
+            "area_error": round(area_error, 4),
+            "center_error": round(det["center_error"], 4),
+            "safety": safety,
+        }
+
+    def stop_robot(self):
+        z = Twist()
+        for _ in range(6):
+            self.cmd_pub.publish(z)
+            time.sleep(0.02)
+
+    def publish_status(self, state, message, extra=None):
+        payload = {
+            "stamp": rospy.Time.now().to_sec() if not rospy.is_shutdown() else 0.0,
+            "state": state,
+            "message": message,
+            "enabled": self.enabled,
+        }
+        if extra:
+            payload.update(extra)
+        self.status_pub.publish(String(json.dumps(payload, ensure_ascii=False)))
+
+    def spin(self):
+        rate = rospy.Rate(self.cmd_rate)
+        while not rospy.is_shutdown():
+            cmd, state, extra = self.compute_cmd()
+            self.cmd_pub.publish(cmd)
+            if state != self.last_state:
+                self.publish_status(state, state, extra)
+                self.last_state = state
+            rate.sleep()
+        self.stop_robot()
+
+
+def main():
+    rospy.init_node("meter_visual_servo")
+    MeterVisualServo().spin()
+
+
+if __name__ == "__main__":
+    main()

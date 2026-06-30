@@ -1,0 +1,11 @@
+{
+  "calibrated_from": "/meter/detection frame_id 5819",
+  "image_width": 640,
+  "image_height": 480,
+  "target_area_ratio": {
+    "pressure_gauge": 0.03746,
+    "water_meter": 0.14769,
+    "default": 0.08
+  },
+  "note": "Captured while robot was at the user-provided ideal distance. Node is not autostarted."
+}

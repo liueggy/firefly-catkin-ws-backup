@@ -1,0 +1,39 @@
+<launch>
+  <arg name="route_file" default="$(find eggy_bringup)/config/inspection_route.json" />
+  <arg name="detection_topic" default="/meter/detection" />
+  <arg name="cmd_vel_topic" default="/cmd_vel" />
+  <arg name="image_topic" default="/camera/front/image/compressed" />
+  <arg name="dry_run" default="true" />
+
+  <node pkg="eggy_bringup" type="inspection_target_aligner.py" name="inspection_target_aligner" output="screen">
+    <param name="detection_topic" value="$(arg detection_topic)" />
+    <param name="cmd_vel_topic" value="$(arg cmd_vel_topic)" />
+    <param name="dry_run" value="$(arg dry_run)" />
+    <param name="min_score" value="0.45" />
+    <param name="center_tolerance_px" value="35" />
+    <param name="size_tolerance_ratio" value="0.18" />
+    <param name="search_angular_speed" value="0.22" />
+    <param name="max_angular_speed" value="0.28" />
+    <param name="max_linear_speed" value="0.08" />
+    <param name="pressure_gauge_height_px_at_20cm" value="115" />
+    <param name="water_meter_height_px_at_20cm" value="130" />
+  </node>
+
+  <node pkg="eggy_bringup" type="inspection_cycle_manager.py" name="inspection_cycle_manager" output="screen">
+    <param name="route_file" value="$(arg route_file)" />
+    <param name="default_frame" value="map" />
+    <param name="default_interval_sec" value="360" />
+    <param name="fast_interval_sec" value="240" />
+    <param name="move_base_timeout" value="120" />
+    <param name="align_timeout" value="70" />
+    <param name="reading_timeout" value="45" />
+    <param name="pressure_low" value="6.0" />
+    <param name="pressure_high" value="8.0" />
+    <param name="pressure_near_margin" value="0.5" />
+    <param name="water_delta_threshold" value="100.0" />
+    <param name="scan_lateral_speed" value="0.12" />
+    <param name="scan_capture_interval" value="0.5" />
+    <param name="image_topic" value="$(arg image_topic)" />
+    <param name="dry_run" value="$(arg dry_run)" />
+  </node>
+</launch>
