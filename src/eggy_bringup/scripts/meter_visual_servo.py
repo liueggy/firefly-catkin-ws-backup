@@ -33,15 +33,15 @@ class MeterVisualServo:
         self.require_scan = bool(rospy.get_param("~require_scan", True))
 
         self.area_tolerance = float(rospy.get_param("~area_tolerance", 0.12))
-        self.max_linear = float(rospy.get_param("~max_linear", 0.22))
-        self.min_linear = float(rospy.get_param("~min_linear", 0.055))
-        self.linear_gain = float(rospy.get_param("~linear_gain", 0.28))
+        self.max_linear = float(rospy.get_param("~max_linear", 0.26))
+        self.min_linear = float(rospy.get_param("~min_linear", 0.065))
+        self.linear_gain = float(rospy.get_param("~linear_gain", 0.34))
         self.max_angular = float(rospy.get_param("~max_angular", 0.42))
         self.center_kp = float(rospy.get_param("~center_kp", 0.55))
         self.center_deadband = float(rospy.get_param("~center_deadband", 0.06))
         self.search_wz = float(rospy.get_param("~search_wz", 0.45))
-        self.cmd_rate = float(rospy.get_param("~cmd_rate", 20.0))
-        self.detection_timeout = float(rospy.get_param("~detection_timeout", 0.8))
+        self.cmd_rate = float(rospy.get_param("~cmd_rate", 25.0))
+        self.detection_timeout = float(rospy.get_param("~detection_timeout", 0.55))
         self.scan_timeout = float(rospy.get_param("~scan_timeout", 1.0))
         self.obstacle_stop = float(rospy.get_param("~obstacle_stop", 0.35))
         self.obstacle_slow = float(rospy.get_param("~obstacle_slow", 0.55))
@@ -61,7 +61,7 @@ class MeterVisualServo:
 
         self.cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
         self.status_pub = rospy.Publisher("/meter_visual_servo/status", String, queue_size=1, latch=True)
-        rospy.Subscriber(self.detection_topic, String, self.on_detection, queue_size=5)
+        rospy.Subscriber(self.detection_topic, String, self.on_detection, queue_size=1)
         rospy.Subscriber(self.scan_topic, LaserScan, self.on_scan, queue_size=1)
         rospy.Subscriber("/meter_visual_servo/request", String, self.on_request, queue_size=5)
 
@@ -138,16 +138,44 @@ class MeterVisualServo:
                     "area_ratio": area_ratio,
                     "center_error": center_error,
                     "edge_touch": edge_touch,
+                    "x1": x1,
+                    "y1": y1,
+                    "x2": x2,
+                    "y2": y2,
                 })
             if not valid:
                 self.last_target_visible = False
                 return
+            group_x1 = min(d["x1"] for d in valid)
+            group_y1 = min(d["y1"] for d in valid)
+            group_x2 = max(d["x2"] for d in valid)
+            group_y2 = max(d["y2"] for d in valid)
+            margin_x = image_width * self.edge_lost_margin
+            margin_y = image_height * self.edge_lost_margin
+            group_left_edge = group_x1 <= margin_x
+            group_right_edge = group_x2 >= image_width - margin_x
+            group_edge_touch = (
+                group_left_edge
+                or group_right_edge
+                or group_y1 <= margin_y
+                or group_y2 >= image_height - margin_y
+            )
+            group_cx = (group_x1 + group_x2) * 0.5
+            group_center_error = (group_cx - image_width * 0.5) / (image_width * 0.5)
+            if group_left_edge and not group_right_edge:
+                group_center_error = min(group_center_error, -self.center_deadband * 1.5)
+            elif group_right_edge and not group_left_edge:
+                group_center_error = max(group_center_error, self.center_deadband * 1.5)
             # Prefer the largest visible meter/gauge; use score only as a tie-breaker.
             best = sorted(valid, key=lambda d: (d["area_ratio"], d["score"]), reverse=True)[0]
+            best["group_count"] = len(valid)
+            best["group_edge_touch"] = group_edge_touch
+            best["group_horizontal_edge_touch"] = group_left_edge or group_right_edge
+            best["group_center_error"] = group_center_error
             self.last_detection = best
             self.last_detection_time = now
             self.last_target_visible = True
-            self.last_center_error = best["center_error"]
+            self.last_center_error = best["group_center_error"]
         except Exception as exc:
             rospy.logwarn_throttle(2.0, "bad detection message: %s", exc)
 
@@ -223,12 +251,18 @@ class MeterVisualServo:
         area = det["area_ratio"]
         area_error = (target - area) / max(target, 1e-6)
 
-        if abs(area_error) <= self.area_tolerance and not det["edge_touch"]:
+        group_edge_touch = bool(det.get("group_edge_touch", det["edge_touch"]))
+        group_horizontal_edge_touch = bool(det.get("group_horizontal_edge_touch", det["edge_touch"]))
+        group_center_error = float(det.get("group_center_error", det["center_error"]))
+
+        if abs(area_error) <= self.area_tolerance and not group_edge_touch:
             return Twist(), "target_size_reached", {
                 "class_name": det["class_name"],
                 "area_ratio": round(area, 5),
                 "target_area_ratio": round(target, 5),
                 "center_error": round(det["center_error"], 4),
+                "group_count": int(det.get("group_count", 1)),
+                "group_center_error": round(group_center_error, 4),
             }
 
         linear = clamp(self.linear_gain * area_error, -self.max_linear, self.max_linear)
@@ -238,8 +272,8 @@ class MeterVisualServo:
 
         cmd = Twist()
         cmd.linear.x = linear
-        if det["edge_touch"] and abs(det["center_error"]) > self.center_deadband:
-            cmd.angular.z = clamp(-self.center_kp * det["center_error"], -self.max_angular, self.max_angular)
+        if group_horizontal_edge_touch and abs(group_center_error) > self.center_deadband:
+            cmd.angular.z = clamp(-self.center_kp * group_center_error, -self.max_angular, self.max_angular)
         state = "servo_forward" if linear > 0 else "servo_backward" if linear < 0 else "blocked"
         return cmd, state, {
             "class_name": det["class_name"],
@@ -247,6 +281,9 @@ class MeterVisualServo:
             "target_area_ratio": round(target, 5),
             "area_error": round(area_error, 4),
             "center_error": round(det["center_error"], 4),
+            "group_count": int(det.get("group_count", 1)),
+            "group_center_error": round(group_center_error, 4),
+            "group_edge_touch": group_edge_touch,
             "angular_z": round(cmd.angular.z, 4),
             "safety": safety,
         }
