@@ -33,17 +33,15 @@ class MeterVisualServo:
         self.require_scan = bool(rospy.get_param("~require_scan", True))
 
         self.area_tolerance = float(rospy.get_param("~area_tolerance", 0.12))
-        self.max_linear = float(rospy.get_param("~max_linear", 0.32))
-        self.min_linear = float(rospy.get_param("~min_linear", 0.08))
-        self.linear_gain = float(rospy.get_param("~linear_gain", 0.46))
+        self.max_linear = float(rospy.get_param("~max_linear", 0.26))
+        self.min_linear = float(rospy.get_param("~min_linear", 0.065))
+        self.linear_gain = float(rospy.get_param("~linear_gain", 0.34))
         self.max_angular = float(rospy.get_param("~max_angular", 0.42))
         self.center_kp = float(rospy.get_param("~center_kp", 0.55))
-        self.framing_kp = float(rospy.get_param("~framing_kp", 0.9))
-        self.framing_max_angular = float(rospy.get_param("~framing_max_angular", 0.68))
         self.center_deadband = float(rospy.get_param("~center_deadband", 0.06))
         self.search_wz = float(rospy.get_param("~search_wz", 0.45))
-        self.cmd_rate = float(rospy.get_param("~cmd_rate", 30.0))
-        self.detection_timeout = float(rospy.get_param("~detection_timeout", 0.4))
+        self.cmd_rate = float(rospy.get_param("~cmd_rate", 25.0))
+        self.detection_timeout = float(rospy.get_param("~detection_timeout", 0.55))
         self.scan_timeout = float(rospy.get_param("~scan_timeout", 1.0))
         self.obstacle_stop = float(rospy.get_param("~obstacle_stop", 0.35))
         self.obstacle_slow = float(rospy.get_param("~obstacle_slow", 0.55))
@@ -275,11 +273,7 @@ class MeterVisualServo:
         cmd = Twist()
         cmd.linear.x = linear
         if group_horizontal_edge_touch and abs(group_center_error) > self.center_deadband:
-            cmd.angular.z = clamp(
-                -self.framing_kp * group_center_error,
-                -self.framing_max_angular,
-                self.framing_max_angular,
-            )
+            cmd.angular.z = clamp(-self.center_kp * group_center_error, -self.max_angular, self.max_angular)
         state = "servo_forward" if linear > 0 else "servo_backward" if linear < 0 else "blocked"
         return cmd, state, {
             "class_name": det["class_name"],
