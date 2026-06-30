@@ -142,8 +142,8 @@ class MeterVisualServo:
             if not valid:
                 self.last_target_visible = False
                 return
-            # Prefer the most confident current meter/gauge; use class-specific target size.
-            best = sorted(valid, key=lambda d: d["score"], reverse=True)[0]
+            # Prefer the largest visible meter/gauge; use score only as a tie-breaker.
+            best = sorted(valid, key=lambda d: (d["area_ratio"], d["score"]), reverse=True)[0]
             self.last_detection = best
             self.last_detection_time = now
             self.last_target_visible = True
@@ -238,7 +238,7 @@ class MeterVisualServo:
 
         cmd = Twist()
         cmd.linear.x = linear
-        if abs(det["center_error"]) > self.center_deadband:
+        if det["edge_touch"] and abs(det["center_error"]) > self.center_deadband:
             cmd.angular.z = clamp(-self.center_kp * det["center_error"], -self.max_angular, self.max_angular)
         state = "servo_forward" if linear > 0 else "servo_backward" if linear < 0 else "blocked"
         return cmd, state, {
