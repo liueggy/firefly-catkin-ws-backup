@@ -1,0 +1,19 @@
+<launch>
+  <arg name="route_file" default="" />
+  <arg name="dry_run" default="false" />
+  <arg name="default_frame" default="map" />
+  <arg name="base_frame" default="base_link" />
+  <arg name="move_base_timeout" default="120" />
+  <arg name="servo_timeout" default="60" />
+  <arg name="servo_stable_sec" default="1.2" />
+
+  <node pkg="eggy_bringup" type="inspection_servo_route_runner.py" name="inspection_servo_route_runner" output="screen">
+    <param name="route_file" value="$(arg route_file)" />
+    <param name="dry_run" value="$(arg dry_run)" />
+    <param name="default_frame" value="$(arg default_frame)" />
+    <param name="base_frame" value="$(arg base_frame)" />
+    <param name="move_base_timeout" value="$(arg move_base_timeout)" />
+    <param name="servo_timeout" value="$(arg servo_timeout)" />
+    <param name="servo_stable_sec" value="$(arg servo_stable_sec)" />
+  </node>
+</launch>
