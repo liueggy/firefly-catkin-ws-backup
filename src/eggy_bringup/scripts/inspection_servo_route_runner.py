@@ -53,7 +53,8 @@ class InspectionServoRouteRunner:
         self.move_base_timeout = float(rospy.get_param("~move_base_timeout", 120.0))
         self.current_pose_timeout = float(rospy.get_param("~current_pose_timeout", 3.0))
         self.servo_timeout = float(rospy.get_param("~servo_timeout", 60.0))
-        self.servo_stable_sec = float(rospy.get_param("~servo_stable_sec", 1.2))
+        self.servo_stable_sec = float(rospy.get_param("~servo_stable_sec", 0.6))
+        self.servo_startup_wait = float(rospy.get_param("~servo_startup_wait", 0.35))
         self.servo_shutdown_timeout = float(rospy.get_param("~servo_shutdown_timeout", 3.0))
         self.stop_on_nav_fail = bool(rospy.get_param("~stop_on_nav_fail", True))
         self.stop_on_servo_fail = bool(rospy.get_param("~stop_on_servo_fail", True))
@@ -310,7 +311,7 @@ class InspectionServoRouteRunner:
             preexec_fn=os.setsid,
             env=env,
         )
-        rospy.sleep(0.8)
+        rospy.sleep(self.servo_startup_wait)
         self.servo_request_pub.publish(String("start"))
 
     def stop_servo_node(self):
