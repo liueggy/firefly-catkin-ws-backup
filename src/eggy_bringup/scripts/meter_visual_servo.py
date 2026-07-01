@@ -33,8 +33,11 @@ class MeterVisualServo:
         self.require_scan = bool(rospy.get_param("~require_scan", True))
 
         self.area_tolerance = float(rospy.get_param("~area_tolerance", 0.12))
+        self.area_unlock_tolerance = float(rospy.get_param("~area_unlock_tolerance", 0.22))
+        self.near_area_error = float(rospy.get_param("~near_area_error", 0.30))
         self.max_linear = float(rospy.get_param("~max_linear", 0.26))
         self.min_linear = float(rospy.get_param("~min_linear", 0.065))
+        self.min_linear_near = float(rospy.get_param("~min_linear_near", 0.025))
         self.linear_gain = float(rospy.get_param("~linear_gain", 0.34))
         self.max_angular = float(rospy.get_param("~max_angular", 0.42))
         self.center_kp = float(rospy.get_param("~center_kp", 0.55))
@@ -55,6 +58,7 @@ class MeterVisualServo:
         self.last_detection_msg_time = 0.0
         self.last_target_visible = False
         self.last_center_error = 0.0
+        self.distance_locked = False
         self.scan = None
         self.scan_time = 0.0
         self.last_state = ""
@@ -92,13 +96,16 @@ class MeterVisualServo:
         text = (msg.data or "").strip().lower()
         if text in ("start", "enable", "on"):
             self.enabled = True
+            self.distance_locked = False
             self.publish_status("enabled", "servo enabled")
         elif text in ("stop", "disable", "off"):
             self.enabled = False
+            self.distance_locked = False
             self.stop_robot()
             self.publish_status("disabled", "servo disabled")
         elif text in ("reload", "reload_target"):
             self.targets = self.load_targets()
+            self.distance_locked = False
             self.publish_status("reloaded", "target file reloaded")
 
     def on_detection(self, msg):
@@ -237,6 +244,7 @@ class MeterVisualServo:
         )
         stale_target = self.last_detection is None or now - self.last_detection_time > self.detection_timeout
         if fresh_empty_frame or stale_target:
+            self.distance_locked = False
             cmd = Twist()
             if abs(self.last_center_error) > 0.05:
                 cmd.angular.z = self.search_wz if self.last_center_error < 0 else -self.search_wz
@@ -255,7 +263,20 @@ class MeterVisualServo:
         group_horizontal_edge_touch = bool(det.get("group_horizontal_edge_touch", det["edge_touch"]))
         group_center_error = float(det.get("group_center_error", det["center_error"]))
 
+        if self.distance_locked:
+            if abs(area_error) <= self.area_unlock_tolerance and not group_edge_touch:
+                return Twist(), "target_size_hold", {
+                    "class_name": det["class_name"],
+                    "area_ratio": round(area, 5),
+                    "target_area_ratio": round(target, 5),
+                    "area_error": round(area_error, 4),
+                    "unlock_tolerance": round(self.area_unlock_tolerance, 4),
+                    "group_count": int(det.get("group_count", 1)),
+                }
+            self.distance_locked = False
+
         if abs(area_error) <= self.area_tolerance and not group_edge_touch:
+            self.distance_locked = True
             return Twist(), "target_size_reached", {
                 "class_name": det["class_name"],
                 "area_ratio": round(area, 5),
@@ -266,8 +287,9 @@ class MeterVisualServo:
             }
 
         linear = clamp(self.linear_gain * area_error, -self.max_linear, self.max_linear)
-        if abs(linear) < self.min_linear:
-            linear = self.min_linear if area_error > 0 else -self.min_linear
+        min_linear = self.min_linear_near if abs(area_error) <= self.near_area_error else self.min_linear
+        if abs(linear) < min_linear:
+            linear = min_linear if area_error > 0 else -min_linear
         linear, safety = self.safe_linear(linear)
 
         cmd = Twist()
@@ -280,6 +302,8 @@ class MeterVisualServo:
             "area_ratio": round(area, 5),
             "target_area_ratio": round(target, 5),
             "area_error": round(area_error, 4),
+            "distance_locked": self.distance_locked,
+            "min_linear": round(min_linear, 4),
             "center_error": round(det["center_error"], 4),
             "group_count": int(det.get("group_count", 1)),
             "group_center_error": round(group_center_error, 4),
