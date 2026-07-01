@@ -13,6 +13,7 @@ import signal
 import subprocess
 import threading
 import time
+import uuid
 
 import actionlib
 import rospy
@@ -56,23 +57,30 @@ class InspectionServoRouteRunner:
         self.servo_stable_sec = float(rospy.get_param("~servo_stable_sec", 0.6))
         self.servo_startup_wait = float(rospy.get_param("~servo_startup_wait", 0.35))
         self.servo_shutdown_timeout = float(rospy.get_param("~servo_shutdown_timeout", 3.0))
+        self.enable_kimi_after_servo = bool(rospy.get_param("~enable_kimi_after_servo", True))
+        self.kimi_timeout = float(rospy.get_param("~kimi_timeout", 90.0))
+        self.kimi_task = rospy.get_param("~kimi_task", "meter")
         self.stop_on_nav_fail = bool(rospy.get_param("~stop_on_nav_fail", True))
         self.stop_on_servo_fail = bool(rospy.get_param("~stop_on_servo_fail", True))
+        self.stop_on_kimi_fail = bool(rospy.get_param("~stop_on_kimi_fail", False))
         self.dry_run = bool(rospy.get_param("~dry_run", False))
 
         self.lock = threading.Lock()
         self.busy = False
         self.cancel_requested = False
         self.latest_servo_status = {}
+        self.kimi_results = {}
         self.servo_proc = None
 
         self.status_pub = rospy.Publisher("/inspection_servo_route/status", String, queue_size=10, latch=True)
         self.result_pub = rospy.Publisher("/inspection_servo_route/result", String, queue_size=10, latch=True)
         self.cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
         self.servo_request_pub = rospy.Publisher("/meter_visual_servo/request", String, queue_size=5)
+        self.kimi_request_pub = rospy.Publisher("/kimi_inspection/request", String, queue_size=5)
 
         rospy.Subscriber("/inspection_servo_route/request", String, self.on_request, queue_size=5)
         rospy.Subscriber("/meter_visual_servo/status", String, self.on_servo_status, queue_size=20)
+        rospy.Subscriber("/kimi_inspection/result", String, self.on_kimi_result, queue_size=10)
 
         self.tf_listener = tf.TransformListener()
         self.client = actionlib.SimpleActionClient("/move_base", MoveBaseAction)
@@ -86,6 +94,16 @@ class InspectionServoRouteRunner:
             return
         with self.lock:
             self.latest_servo_status = data
+
+    def on_kimi_result(self, msg):
+        try:
+            data = json.loads(msg.data)
+        except Exception:
+            return
+        request_id = data.get("request_id")
+        if request_id:
+            with self.lock:
+                self.kimi_results[str(request_id)] = data
 
     def on_request(self, msg):
         payload = self.parse_payload(msg.data)
@@ -203,7 +221,7 @@ class InspectionServoRouteRunner:
                     "waypoint": wp,
                 })
                 nav = self.navigate_to(wp)
-                point = {"waypoint": wp, "navigation": nav, "servo": None}
+                point = {"waypoint": wp, "navigation": nav, "servo": None, "kimi": None}
                 if not nav.get("ok"):
                     results.append(point)
                     if self.stop_on_nav_fail:
@@ -216,11 +234,22 @@ class InspectionServoRouteRunner:
                 })
                 servo = self.run_visual_servo(wp)
                 point["servo"] = servo
-                results.append(point)
                 self.stop_servo_node()
                 self.stop_robot()
                 if not servo.get("ok") and self.stop_on_servo_fail:
+                    results.append(point)
                     raise RuntimeError("visual servo failed at %s: %s" % (wp["id"], servo.get("state")))
+                if self.enable_kimi_after_servo:
+                    self.publish_status("kimi_running", "running kimi inspection at %s" % wp["id"], {
+                        "index": index,
+                        "waypoint": wp,
+                    })
+                    kimi = self.run_kimi_inspection(wp)
+                    point["kimi"] = kimi
+                    if not kimi.get("ok") and self.stop_on_kimi_fail:
+                        results.append(point)
+                        raise RuntimeError("kimi inspection failed at %s: %s" % (wp["id"], kimi.get("error") or kimi.get("state")))
+                results.append(point)
             if not self.cancel_requested:
                 self.publish_status("returning_home", "returning to start pose", {"home": home})
                 home_nav = self.navigate_to(home)
@@ -298,6 +327,30 @@ class InspectionServoRouteRunner:
                 hold_started = None
             rospy.sleep(0.1)
         return {"ok": False, "state": "servo_timeout", "status": last_status}
+
+    def run_kimi_inspection(self, wp):
+        if self.dry_run:
+            rospy.sleep(0.2)
+            return {"ok": True, "state": "DRY_RUN", "task": wp.get("kimi_task", self.kimi_task)}
+        request_id = str(uuid.uuid4())
+        payload = {
+            "request_id": request_id,
+            "task": str(wp.get("kimi_task", self.kimi_task)),
+            "waypoint_id": wp.get("id"),
+        }
+        with self.lock:
+            self.kimi_results.pop(request_id, None)
+        self.kimi_request_pub.publish(String(json.dumps(payload, ensure_ascii=False)))
+        deadline = time.time() + float(wp.get("kimi_timeout", self.kimi_timeout))
+        while not rospy.is_shutdown() and time.time() < deadline:
+            if self.cancel_requested:
+                return {"ok": False, "state": "cancelled", "request_id": request_id}
+            with self.lock:
+                data = self.kimi_results.get(request_id)
+            if data:
+                return data
+            rospy.sleep(0.1)
+        return {"ok": False, "state": "kimi_timeout", "request_id": request_id, "task": payload["task"]}
 
     def start_servo_node(self):
         self.stop_servo_node()

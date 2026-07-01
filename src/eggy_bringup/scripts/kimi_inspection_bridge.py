@@ -58,21 +58,24 @@ class KimiInspectionBridge:
             self.latest_msg = msg
 
     def on_request(self, msg):
-        task = self.parse_task(msg.data)
-        self.start_analysis(task, "request")
+        payload = self.parse_request(msg.data)
+        self.start_analysis(payload, "request")
 
     def on_timer(self, _event):
-        self.start_analysis(self.default_task, "timer")
+        self.start_analysis({"task": self.default_task}, "timer")
 
-    def parse_task(self, data):
+    def parse_request(self, data):
         text = (data or "").strip()
         if not text:
-            return self.default_task
+            return {"task": self.default_task}
         try:
             payload = json.loads(text)
-            return str(payload.get("task") or self.default_task).strip()
+            if isinstance(payload, dict):
+                payload["task"] = str(payload.get("task") or self.default_task).strip()
+                return payload
         except Exception:
-            return text
+            pass
+        return {"task": text}
 
     def normalize_task(self, task):
         task = (task or self.default_task).strip().lower()
@@ -82,7 +85,7 @@ class KimiInspectionBridge:
             return "pipe", "/analyze_pipe"
         raise ValueError("unknown task: %s" % task)
 
-    def start_analysis(self, task, trigger):
+    def start_analysis(self, request_payload, trigger):
         with self.lock:
             if self.busy:
                 self.publish_status("busy", "analysis already running")
@@ -94,12 +97,14 @@ class KimiInspectionBridge:
             self.busy = True
 
         thread = threading.Thread(
-            target=self.run_analysis, args=(task, trigger, msg), daemon=True
+            target=self.run_analysis, args=(request_payload, trigger, msg), daemon=True
         )
         thread.start()
 
-    def run_analysis(self, task, trigger, msg):
+    def run_analysis(self, request_payload, trigger, msg):
         started = time.time()
+        task = request_payload.get("task", self.default_task)
+        request_id = request_payload.get("request_id")
         try:
             task_name, endpoint = self.normalize_task(task)
             url = self.api_base + endpoint
@@ -118,12 +123,14 @@ class KimiInspectionBridge:
 
             result = {
                 "ok": True,
+                "request_id": request_id,
                 "task": task_name,
                 "trigger": trigger,
                 "stamp": rospy.Time.now().to_sec(),
                 "camera_stamp": msg.header.stamp.to_sec(),
                 "elapsed_sec": round(time.time() - started, 3),
                 "api": api_result,
+                "request": request_payload,
             }
             self.result_pub.publish(String(json.dumps(result, ensure_ascii=False)))
             self.publish_command_response(task_name, True, "Kimi inspection complete", result)
@@ -131,11 +138,13 @@ class KimiInspectionBridge:
         except Exception as exc:
             result = {
                 "ok": False,
+                "request_id": request_id,
                 "task": task,
                 "trigger": trigger,
                 "stamp": rospy.Time.now().to_sec(),
                 "elapsed_sec": round(time.time() - started, 3),
                 "error": str(exc),
+                "request": request_payload,
             }
             self.result_pub.publish(String(json.dumps(result, ensure_ascii=False)))
             self.publish_command_response(task, False, "Kimi inspection failed", result)

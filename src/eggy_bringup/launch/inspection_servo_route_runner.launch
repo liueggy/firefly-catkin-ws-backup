@@ -7,6 +7,9 @@
   <arg name="servo_timeout" default="60" />
   <arg name="servo_stable_sec" default="0.6" />
   <arg name="servo_startup_wait" default="0.35" />
+  <arg name="enable_kimi_after_servo" default="true" />
+  <arg name="kimi_timeout" default="90" />
+  <arg name="kimi_task" default="meter" />
 
   <node pkg="eggy_bringup" type="inspection_servo_route_runner.py" name="inspection_servo_route_runner" output="screen">
     <param name="route_file" value="$(arg route_file)" />
@@ -17,5 +20,8 @@
     <param name="servo_timeout" value="$(arg servo_timeout)" />
     <param name="servo_stable_sec" value="$(arg servo_stable_sec)" />
     <param name="servo_startup_wait" value="$(arg servo_startup_wait)" />
+    <param name="enable_kimi_after_servo" value="$(arg enable_kimi_after_servo)" />
+    <param name="kimi_timeout" value="$(arg kimi_timeout)" />
+    <param name="kimi_task" value="$(arg kimi_task)" />
   </node>
 </launch>
