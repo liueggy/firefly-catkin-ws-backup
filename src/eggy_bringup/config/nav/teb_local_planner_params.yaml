@@ -22,9 +22,9 @@ TebLocalPlannerROS:
   max_vel_x_backwards: 0.10
   max_vel_y: 0.22
   max_vel_trans: 0.35
-  min_vel_trans: 0.04
+  min_vel_trans: 0.01
   max_vel_theta: 0.80
-  min_vel_theta: 0.15
+  min_vel_theta: 0.05
 
   # --- 加速度限制 ---
   acc_lim_x: 0.8
@@ -46,9 +46,9 @@ TebLocalPlannerROS:
   optimization_verbose: false
 
   # --- 目标容差 ---
-  xy_goal_tolerance: 0.12
-  yaw_goal_tolerance: 0.20
-  free_goal_vel: false
+  xy_goal_tolerance: 0.18
+  yaw_goal_tolerance: 0.60
+  free_goal_vel: true
 
   # --- 障碍物 ---
   min_obstacle_dist: 0.18
