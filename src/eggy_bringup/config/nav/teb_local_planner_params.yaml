@@ -19,7 +19,7 @@ TebLocalPlannerROS:
 
   # --- 速度限制 ---
   max_vel_x: 0.35
-  max_vel_x_backwards: 0.10
+  max_vel_x_backwards: 0.03
   max_vel_y: 0.22
   max_vel_trans: 0.35
   min_vel_trans: 0.01
@@ -36,9 +36,9 @@ TebLocalPlannerROS:
   dt_hysteresis: 0.08
   teb_autosize: true
   global_plan_overwrite_orientation: false
-  allow_init_with_backwards_motion: true
+  allow_init_with_backwards_motion: false
   max_global_plan_lookahead_dist: 2.2
-  global_plan_viapoint_sep: -1.0
+  global_plan_viapoint_sep: 0.35
   max_samples: 500
   no_inner_iterations: 4
   no_outer_iterations: 3
@@ -61,10 +61,10 @@ TebLocalPlannerROS:
   feasibility_check_no_poses: 2
 
   # --- 权重 ---
-  weight_kinematics_forward_drive: 0.0
+  weight_kinematics_forward_drive: 20.0
   weight_kinematics_turning_radius: 0.0
-  weight_optimaltime: 6.0
-  weight_shortest_path: 1.5
+  weight_optimaltime: 4.0
+  weight_shortest_path: 4.0
   weight_obstacle: 60.0
   weight_inflation: 0.6
   weight_dynamic_obstacle: 10.0
@@ -72,6 +72,7 @@ TebLocalPlannerROS:
   weight_acceleration_obstacle: 10.0
   weight_parallelity: 5.0
   weight_custom_obstacle: 10.0
+  weight_viapoint: 8.0
 
   # --- 其它 ---
   enable_homotopy_class_planning: false
