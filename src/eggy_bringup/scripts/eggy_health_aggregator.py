@@ -21,7 +21,7 @@ level: 0=OK 1=WARN 2=ERROR 3=STALE
 import rospy
 import threading
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
-from sensor_msgs.msg import LaserScan, BatteryState
+from sensor_msgs.msg import LaserScan, BatteryState, CompressedImage
 from nav_msgs.msg import Odometry
 from std_msgs.msg import Float32, UInt8
 from actionlib_msgs.msg import GoalStatusArray
@@ -35,9 +35,10 @@ BATT_WARN_V = 11.0      # 3S 锂电，低于 11V 提醒
 BATT_ERR_V = 10.5       # 低于 10.5V 严重
 SCAN_TIMEOUT_S = 1.0    # /scan 超过 1s 无更新视为离线
 ODOM_TIMEOUT_S = 1.0
+CAMERA_TIMEOUT_S = 2.0
 KEY_NODES = ['/move_base', '/rplidarNode', '/stm32_base_driver',
              '/slam_gmapping', '/eggy_external_imu_odom_fuser',
-             '/ros_qt5_gui_adapter', '/rosbridge_websocket']
+             '/ros_qt5_gui_adapter', '/rosbridge_websocket', '/eggy_camera']
 
 MOVE_BASE_STATUS = {
     0: 'PENDING', 1: 'ACTIVE(导航中)', 2: 'PREEMPTED', 3: 'SUCCEEDED(已到达)',
@@ -64,6 +65,8 @@ class HealthAggregator:
         self.lock = threading.Lock()
         self.last_scan = None
         self.last_odom = None
+        self.last_camera = None
+        self.camera_frame_id = ''
         self.battery_v = None
         self.flag_stop = None
         self.nav_status = None      # 最近一个 GoalStatus 的 status
@@ -75,6 +78,7 @@ class HealthAggregator:
         rospy.Subscriber('/stm32/diagnostics', DiagnosticArray, self._on_diag, queue_size=10)
         rospy.Subscriber('/scan', LaserScan, self._on_scan, queue_size=1)
         rospy.Subscriber('/odom', Odometry, self._on_odom, queue_size=1)
+        rospy.Subscriber('/camera/front/image/compressed', CompressedImage, self._on_camera, queue_size=1)
         rospy.Subscriber('/battery', BatteryState, self._on_battery, queue_size=1)
         rospy.Subscriber('/battery/voltage', Float32, self._on_voltage, queue_size=1)
         rospy.Subscriber('/base/flag_stop', UInt8, self._on_flag, queue_size=1)
@@ -104,6 +108,11 @@ class HealthAggregator:
     def _on_odom(self, msg):
         with self.lock:
             self.last_odom = rospy.Time.now()
+
+    def _on_camera(self, msg):
+        with self.lock:
+            self.last_camera = rospy.Time.now()
+            self.camera_frame_id = msg.header.frame_id
 
     def _on_battery(self, msg):
         with self.lock:
@@ -246,6 +255,33 @@ class HealthAggregator:
                 llvl, '激光雷达', '在线' if llvl == 0 else '超时无数据',
                 '传感器', [('scan_age_s', round(age, 3))]))
 
+        # 5. 摄像头
+        with self.lock:
+            lc = self.last_camera
+            camera_frame = self.camera_frame_id
+        camera_node_alive = '/eggy_camera' in alive
+        if lc is None:
+            clvl = DiagnosticStatus.STALE if camera_node_alive else DiagnosticStatus.ERROR
+            arr.status.append(make_status(
+                clvl, '摄像头', '节点在线但无图像' if camera_node_alive else '摄像头节点离线',
+                '视觉', [('node', 'online' if camera_node_alive else 'offline'),
+                       ('image_topic', '/camera/front/image/compressed'),
+                       ('frame_age_s', 'n/a')]))
+        else:
+            age = (now - lc).to_sec()
+            clvl = DiagnosticStatus.OK if camera_node_alive and age < CAMERA_TIMEOUT_S else DiagnosticStatus.ERROR
+            if not camera_node_alive:
+                cmsg = '摄像头节点离线'
+            elif age >= CAMERA_TIMEOUT_S:
+                cmsg = '图像流超时'
+            else:
+                cmsg = '在线'
+            arr.status.append(make_status(
+                clvl, '摄像头', cmsg,
+                '视觉', [('node', 'online' if camera_node_alive else 'offline'),
+                       ('image_topic', '/camera/front/image/compressed'),
+                       ('frame_age_s', round(age, 3)),
+                       ('frame_id', camera_frame or 'n/a')]))
         # 5. 里程计
         with self.lock:
             lo = self.last_odom
@@ -323,3 +359,7 @@ if __name__ == '__main__':
         main()
     except rospy.ROSInterruptException:
         pass
+
+
+
+

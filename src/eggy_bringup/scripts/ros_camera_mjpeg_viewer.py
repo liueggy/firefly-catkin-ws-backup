@@ -12,14 +12,16 @@ from sensor_msgs.msg import CompressedImage
 
 latest_frame = None
 latest_stamp = 0.0
+latest_seq = 0
 frame_cond = threading.Condition()
 
 
 def on_image(msg):
-    global latest_frame, latest_stamp
+    global latest_frame, latest_stamp, latest_seq
     with frame_cond:
         latest_frame = bytes(msg.data)
         latest_stamp = msg.header.stamp.to_sec() or time.time()
+        latest_seq += 1
         frame_cond.notify_all()
 
 
@@ -63,12 +65,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
 
-        last_sent_stamp = 0.0
+        last_sent_seq = -1
         while not rospy.is_shutdown():
-            frame, stamp = self.wait_new_frame(last_sent_stamp, timeout=5.0)
+            frame, seq = self.wait_new_frame(last_sent_seq, timeout=1.0)
             if frame is None:
                 continue
-            last_sent_stamp = stamp
+            last_sent_seq = seq
             try:
                 self.wfile.write(b"--frame\r\n")
                 self.wfile.write(b"Content-Type: image/jpeg\r\n")
@@ -85,12 +87,14 @@ class Handler(BaseHTTPRequestHandler):
                 frame_cond.wait(timeout=0.2)
             return latest_frame
 
-    def wait_new_frame(self, previous_stamp, timeout):
+    def wait_new_frame(self, previous_seq, timeout):
         deadline = time.time() + timeout
         with frame_cond:
-            while latest_stamp <= previous_stamp and time.time() < deadline and not rospy.is_shutdown():
+            while latest_frame is None and time.time() < deadline and not rospy.is_shutdown():
                 frame_cond.wait(timeout=0.2)
-            return latest_frame, latest_stamp
+            while latest_seq <= previous_seq and time.time() < deadline and not rospy.is_shutdown():
+                frame_cond.wait(timeout=0.2)
+            return latest_frame, latest_seq
 
     def log_message(self, _fmt, *_args):
         return
@@ -101,6 +105,7 @@ def main():
     topic = rospy.get_param("~image_topic", "/camera/front/image_source/compressed")
     port = int(rospy.get_param("~port", 8081))
     rospy.Subscriber(topic, CompressedImage, on_image, queue_size=1, buff_size=2**24)
+    ThreadingHTTPServer.allow_reuse_address = True
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     rospy.loginfo("ROS camera MJPEG viewer: topic=%s url=http://0.0.0.0:%d/", topic, port)
     server.serve_forever()

@@ -1,4 +1,4 @@
-
+﻿
 
 
 from flask import Flask, request, jsonify
@@ -18,7 +18,7 @@ except Exception:
     pass
 
 
-# 从环境变量读取 Kimi API Key，避免硬编码密钥
+# 浠庣幆澧冨彉閲忚鍙?Kimi API Key锛岄伩鍏嶇‖缂栫爜瀵嗛挜
 KIMI_API_KEY = os.environ.get("KIMI_API_KEY")
 if not KIMI_API_KEY:
     raise RuntimeError("KIMI_API_KEY environment variable is required")
@@ -37,11 +37,10 @@ def index():
 
 def compress_image(input_path, output_path):
     """
-    压缩图片，加快上传和识别速度。
-    """
+    鍘嬬缉鍥剧墖锛屽姞蹇笂浼犲拰璇嗗埆閫熷害銆?    """
     img = Image.open(input_path).convert("RGB")
 
-    max_side = 768
+    max_side = int(os.environ.get("KIMI_IMAGE_MAX_SIDE", "1280"))
     w, h = img.size
 
     if max(w, h) > max_side:
@@ -50,7 +49,8 @@ def compress_image(input_path, output_path):
         new_h = int(h * scale)
         img = img.resize((new_w, new_h))
 
-    img.save(output_path, "JPEG", quality=70, optimize=True)
+    quality = int(os.environ.get("KIMI_IMAGE_JPEG_QUALITY", "92"))
+    img.save(output_path, "JPEG", quality=quality, optimize=True)
 
 
 def image_to_base64(image_path):
@@ -63,8 +63,7 @@ def image_to_base64(image_path):
 
 def extract_json(text):
     """
-    尽量从模型返回中提取 JSON。
-    """
+    灏介噺浠庢ā鍨嬭繑鍥炰腑鎻愬彇 JSON銆?    """
     try:
         return json.loads(text)
     except Exception:
@@ -80,17 +79,15 @@ def extract_json(text):
     return {
         "status": "unclear",
         "confidence": 0.0,
-        "reason": "模型返回内容不是合法 JSON",
+        "reason": "妯″瀷杩斿洖鍐呭涓嶆槸鍚堟硶 JSON",
         "raw": text
     }
 
 
 def analyze_image_with_kimi(image_file, prompt, prefix):
     """
-    通用图像分析函数。
-    image_file: Flask 上传的图片
-    prompt: 给 Kimi 的任务提示词
-    prefix: 保存图片时的前缀，例如 meter / pipe
+    閫氱敤鍥惧儚鍒嗘瀽鍑芥暟銆?    image_file: Flask 涓婁紶鐨勫浘鐗?    prompt: 缁?Kimi 鐨勪换鍔℃彁绀鸿瘝
+    prefix: 淇濆瓨鍥剧墖鏃剁殑鍓嶇紑锛屼緥濡?meter / pipe
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -107,7 +104,7 @@ def analyze_image_with_kimi(image_file, prompt, prefix):
         messages=[
             {
                 "role": "system",
-                "content": "你是一个严谨的工业巡检图像分析助手，只输出用户要求的 JSON。"
+                "content": "You are a strict industrial inspection vision assistant. Output only the JSON requested by the user."
             },
             {
                 "role": "user",
@@ -142,8 +139,7 @@ def analyze_image_with_kimi(image_file, prompt, prefix):
 @app.route("/analyze_meter", methods=["POST"])
 def analyze_meter():
     """
-    水表读数识别接口。
-    """
+    姘磋〃璇绘暟璇嗗埆鎺ュ彛銆?    """
     if "image" not in request.files:
         return jsonify({
             "ok": False,
@@ -151,24 +147,57 @@ def analyze_meter():
         }), 400
 
     prompt = """
-你是一个水表读数识别助手。请分析图片中是否存在水表，并尽量识别水表读数。
+你是一个工业巡检读表助手。图片可能是整张机器人相机画面，里面可能同时出现：
+- 机械水表 water_meter：蓝色/金色外壳，上方有矩形滚轮数字窗口。
+- 水压表 pressure_gauge：圆形指针表盘，刻度通常为 0 到 10。
+- 干扰物：矿泉水瓶、纸箱、蓝色表盖贴纸、背景文字等。
 
-要求：
-1. 只返回 JSON，不要输出解释性文字。
-2. 如果能看清读数，请填写 reading。
-3. 如果看不清，请 reading 写 unknown。
-4. confidence 用 0.0 到 1.0 表示你的把握程度。
-5. status 只能是 normal、unclear、abnormal 三种之一。
-6. 如果图片不是水表，target 写 none。
+请分别读取画面中可见的机械水表和水压表：
+1. 如果只看到水表，就只给 water_meter 读数，pressure_gauge.present=false。
+2. 如果只看到水压表，就只给 pressure_gauge 读数，water_meter.present=false。
+3. 如果两种都看到，就两个都读。
+4. 不要读取瓶身标签、纸箱文字、蓝色盖子贴纸。
+5. 水表读取机械滚轮数字窗口；即使有反光/倾斜/轻微模糊，也要给 best_effort_reading。某位不确定可用 ?。
+6. 水压表读取指针指向的刻度值，单位 MPa；可以给一位小数，例如 3.5。若介于两格之间，给最接近估计值。
+7. confidence 用 0.0 到 1.0；不确定时 status 写 unclear，但仍尽量给 best_effort_reading。
+8. 读到水压表后必须分析当前巡检情况：
+   - 0 <= pressure < 4：pressure_state 写 low，severity 写 warning，message 写“水压偏低，可能存在管路破损、漏水、阀门未开或供水不足，建议巡检管路”。
+   - 4 <= pressure <= 6：pressure_state 写 normal，severity 写 normal，message 写“水压处于正常范围”。
+   - 6 < pressure <= 10：pressure_state 写 high，severity 写 warning，message 写“水压偏高，可能存在阀门异常、堵塞或压力过高风险，建议人工复核”。
+   - 看不到或无法读取水压：pressure_state 写 unknown，severity 写 unknown，message 写“未能可靠读取水压，建议重新拍摄或人工复核”。
+9. 只返回 JSON，不要输出解释性文字。
 
 返回格式必须严格如下：
 {
-  "target": "water_meter 或 none",
-  "reading": "读数，例如 123.45；看不清写 unknown",
-  "unit": "m3",
-  "confidence": 0.0,
-  "status": "normal/unclear/abnormal",
-  "reason": "简短说明"
+  "target": "meter_reading",
+  "readings": {
+    "water_meter": {
+      "present": true/false,
+      "reading": "例如 00001；完全看不到写 unknown",
+      "best_effort_reading": "例如 00001；没有则 unknown",
+      "unit": "m3",
+      "confidence": 0.0,
+      "status": "normal/unclear/abnormal",
+      "reason": "简短说明读的是哪个数字窗口，哪些位不确定"
+    },
+    "pressure_gauge": {
+      "present": true/false,
+      "reading": "例如 3.5；完全看不到写 unknown",
+      "best_effort_reading": "例如 3.5；没有则 unknown",
+      "unit": "MPa",
+      "confidence": 0.0,
+      "status": "normal/unclear/abnormal",
+      "reason": "简短说明指针位置和估计依据"
+    }
+  },
+  "analysis": {
+    "pressure_state": "low/normal/high/unknown",
+    "severity": "normal/warning/unknown",
+    "message": "给前端展示的中文巡检结论",
+    "possible_causes": ["可能原因1", "可能原因2"],
+    "recommended_action": "建议动作，例如继续巡检/巡检管路/人工复核"
+  },
+  "summary": "简短总结看到并读取了哪些表"
 }
 """
 
@@ -194,8 +223,7 @@ def analyze_meter():
 @app.route("/analyze_pipe", methods=["POST"])
 def analyze_pipe():
     """
-    水管破损/漏水/锈蚀检查接口。
-    """
+    姘寸鐮存崯/婕忔按/閿堣殌妫€鏌ユ帴鍙ｃ€?    """
     if "image" not in request.files:
         return jsonify({
             "ok": False,
@@ -203,39 +231,23 @@ def analyze_pipe():
         }), 400
 
     prompt = """
-你是一个水管巡检图像分析助手。请判断图片中的水管是否存在异常。
+浣犳槸涓€涓按绠″贰妫€鍥惧儚鍒嗘瀽鍔╂墜銆傝鍒ゆ柇鍥剧墖涓殑姘寸鏄惁瀛樺湪寮傚父銆?
+娴嬭瘯绾﹀畾锛?濡傛灉姘寸涓婃垨姘寸闄勮繎鍑虹幇绾㈣壊鏍囪銆佺孩鑹茬嚎鏉°€佺孩鑹插尯鍩燂紝琛ㄧず璇ュ涓虹牬瑁?瑁傜紳鏍囪銆?閬囧埌绾㈣壊鏍囪鏃讹紝搴斿垽鏂负寮傚父锛宧as_abnormal 涓?true锛宻tatus 涓?abnormal锛宒efect_type 浼樺厛鍐?crack 鎴?breakage銆?
+閲嶇偣妫€鏌ワ細
+1. 鏄惁鏈夌牬鎹熸垨鏂
+2. 鏄惁鏈夎缂?3. 鏄惁鏈夋紡姘寸棔杩?4. 鏄惁鏈夋槑鏄鹃攬铓€
+5. 鏄惁鏈夊彉褰?6. 鎺ュご澶勬槸鍚︾枒浼兼澗鍔ㄦ垨寮傚父
 
-测试约定：
-如果水管上或水管附近出现红色标记、红色线条、红色区域，表示该处为破裂/裂缝标记。
-遇到红色标记时，应判断为异常，has_abnormal 为 true，status 为 abnormal，defect_type 优先写 crack 或 breakage。
-
-重点检查：
-1. 是否有破损或断裂
-2. 是否有裂缝
-3. 是否有漏水痕迹
-4. 是否有明显锈蚀
-5. 是否有变形
-6. 接头处是否疑似松动或异常
-
-要求：
-1. 只返回 JSON，不要输出解释性文字。
-2. 如果图片中没有水管，target 写 none。
-3. 如果没有明显异常，has_abnormal 为 false，status 为 normal。
-4. 如果存在疑似异常，has_abnormal 为 true，status 为 abnormal。
-5. 如果图片模糊或无法判断，status 为 unclear。
-6. severity 只能是 none、low、medium、high。
-7. defect_type 只能是 none、crack、breakage、leak、rust、deformation、loose_joint、unknown。
-
-返回格式必须严格如下：
-{
-  "target": "pipe 或 none",
+瑕佹眰锛?1. 鍙繑鍥?JSON锛屼笉瑕佽緭鍑鸿В閲婃€ф枃瀛椼€?2. 濡傛灉鍥剧墖涓病鏈夋按绠★紝target 鍐?none銆?3. 濡傛灉娌℃湁鏄庢樉寮傚父锛宧as_abnormal 涓?false锛宻tatus 涓?normal銆?4. 濡傛灉瀛樺湪鐤戜技寮傚父锛宧as_abnormal 涓?true锛宻tatus 涓?abnormal銆?5. 濡傛灉鍥剧墖妯＄硦鎴栨棤娉曞垽鏂紝status 涓?unclear銆?6. severity 鍙兘鏄?none銆乴ow銆乵edium銆乭igh銆?7. defect_type 鍙兘鏄?none銆乧rack銆乥reakage銆乴eak銆乺ust銆乨eformation銆乴oose_joint銆乽nknown銆?
+杩斿洖鏍煎紡蹇呴』涓ユ牸濡備笅锛?{
+  "target": "pipe 鎴?none",
   "has_abnormal": true/false,
   "defect_type": "none/crack/breakage/leak/rust/deformation/loose_joint/unknown",
   "severity": "none/low/medium/high",
   "confidence": 0.0,
   "status": "normal/unclear/abnormal",
-  "reason": "简短说明你看到了什么",
-  "suggestion": "处理建议，例如继续巡检/人工复核/立即处理"
+  "reason": "绠€鐭鏄庝綘鐪嬪埌浜嗕粈涔?,
+  "suggestion": "澶勭悊寤鸿锛屼緥濡傜户缁贰妫€/浜哄伐澶嶆牳/绔嬪嵆澶勭悊"
 }
 """
 
@@ -260,3 +272,4 @@ def analyze_pipe():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000, debug=False, use_reloader=False, threaded=True)
+
