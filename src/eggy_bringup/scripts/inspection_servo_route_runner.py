@@ -63,6 +63,13 @@ class InspectionServoRouteRunner:
         self.stop_on_nav_fail = bool(rospy.get_param("~stop_on_nav_fail", True))
         self.stop_on_servo_fail = bool(rospy.get_param("~stop_on_servo_fail", True))
         self.stop_on_kimi_fail = bool(rospy.get_param("~stop_on_kimi_fail", False))
+        self.intercept_during_navigation = bool(
+            rospy.get_param("~intercept_during_navigation", True)
+        )
+        self.intercept_min_score = float(rospy.get_param("~intercept_min_score", 0.75))
+        self.intercept_stable_frames = int(rospy.get_param("~intercept_stable_frames", 4))
+        self.intercept_max_age = float(rospy.get_param("~intercept_max_age", 0.7))
+        self.intercept_cooldown = float(rospy.get_param("~intercept_cooldown", 4.0))
         self.dry_run = bool(rospy.get_param("~dry_run", False))
 
         self.lock = threading.Lock()
@@ -71,6 +78,12 @@ class InspectionServoRouteRunner:
         self.latest_servo_status = {}
         self.kimi_results = {}
         self.servo_proc = None
+        self.navigation_active = False
+        self.expected_class = "any"
+        self.detection_candidate = None
+        self.detection_stable_count = 0
+        self.last_detection_class = ""
+        self.last_intercept_time = 0.0
 
         self.status_pub = rospy.Publisher("/inspection_servo_route/status", String, queue_size=10, latch=True)
         self.result_pub = rospy.Publisher("/inspection_servo_route/result", String, queue_size=10, latch=True)
@@ -81,6 +94,7 @@ class InspectionServoRouteRunner:
         rospy.Subscriber("/inspection_servo_route/request", String, self.on_request, queue_size=5)
         rospy.Subscriber("/meter_visual_servo/status", String, self.on_servo_status, queue_size=20)
         rospy.Subscriber("/kimi_inspection/result", String, self.on_kimi_result, queue_size=10)
+        rospy.Subscriber("/meter/detection", String, self.on_detection, queue_size=10)
 
         self.tf_listener = tf.TransformListener()
         self.client = actionlib.SimpleActionClient("/move_base", MoveBaseAction)
@@ -104,6 +118,55 @@ class InspectionServoRouteRunner:
         if request_id:
             with self.lock:
                 self.kimi_results[str(request_id)] = data
+
+    def on_detection(self, msg):
+        try:
+            payload = json.loads(msg.data)
+            detections = payload.get("detections") or []
+        except Exception:
+            return
+
+        with self.lock:
+            if not self.navigation_active:
+                return
+            expected = self.expected_class
+
+        valid = []
+        for detection in detections:
+            class_name = str(detection.get("class_name", ""))
+            score = float(detection.get("score", 0.0))
+            if class_name not in ("water_meter", "pressure_gauge"):
+                continue
+            if expected not in ("", "any", class_name):
+                continue
+            if score < self.intercept_min_score:
+                continue
+            valid.append(detection)
+
+        best = max(valid, key=lambda item: float(item.get("score", 0.0))) if valid else None
+        with self.lock:
+            if best is None:
+                self.detection_stable_count = 0
+                self.last_detection_class = ""
+                self.detection_candidate = None
+                return
+            class_name = str(best.get("class_name", ""))
+            if class_name == self.last_detection_class:
+                self.detection_stable_count += 1
+            else:
+                self.last_detection_class = class_name
+                self.detection_stable_count = 1
+            self.detection_candidate = {
+                "class_name": class_name,
+                "score": float(best.get("score", 0.0)),
+                "stable_frames": self.detection_stable_count,
+                "stamp": time.time(),
+                "box": {
+                    key: best.get(key)
+                    for key in ("x1", "y1", "x2", "y2")
+                    if key in best
+                },
+            }
 
     def on_request(self, msg):
         payload = self.parse_payload(msg.data)
@@ -157,6 +220,16 @@ class InspectionServoRouteRunner:
             item["x"] = float(item["x"])
             item["y"] = float(item["y"])
             item["yaw"] = float(item.get("yaw", 0.0))
+            expected = str(item.get("expected_class", "any")).strip().lower()
+            aliases = {
+                "water": "water_meter",
+                "meter": "water_meter",
+                "pressure": "pressure_gauge",
+                "gauge": "pressure_gauge",
+            }
+            item["expected_class"] = aliases.get(expected, expected)
+            if item["expected_class"] not in ("any", "water_meter", "pressure_gauge"):
+                item["expected_class"] = "any"
             out.append(item)
         return out
 
@@ -231,6 +304,8 @@ class InspectionServoRouteRunner:
                 self.publish_status("servo_starting", "starting visual servo at %s" % wp["id"], {
                     "index": index,
                     "waypoint": wp,
+                    "intercepted": bool(nav.get("intercepted")),
+                    "detection": nav.get("detection"),
                 })
                 servo = self.run_visual_servo(wp)
                 point["servo"] = servo
@@ -267,12 +342,14 @@ class InspectionServoRouteRunner:
             result = {
                 "ok": ok,
                 "state": state,
+                "stage": state,
                 "message": message,
                 "stamp": now_sec(),
                 "elapsed_sec": round(time.time() - started, 3),
                 "waypoint_count": len(waypoints),
                 "home_navigation": home_nav,
                 "results": results,
+                "points": results,
             }
             self.result_pub.publish(String(json.dumps(result, ensure_ascii=False)))
             self.publish_status(state, message, result)
@@ -290,13 +367,59 @@ class InspectionServoRouteRunner:
         goal.target_pose.pose.position.x = wp["x"]
         goal.target_pose.pose.position.y = wp["y"]
         goal.target_pose.pose.orientation = quat_from_yaw(wp.get("yaw", 0.0))
+        with self.lock:
+            self.navigation_active = True
+            self.expected_class = str(wp.get("expected_class", "any"))
+            self.detection_candidate = None
+            self.detection_stable_count = 0
+            self.last_detection_class = ""
         self.client.send_goal(goal)
-        done = self.client.wait_for_result(rospy.Duration(float(wp.get("nav_timeout", self.move_base_timeout))))
-        if not done:
+        deadline = time.time() + float(wp.get("nav_timeout", self.move_base_timeout))
+        try:
+            while not rospy.is_shutdown() and time.time() < deadline:
+                if self.cancel_requested:
+                    self.client.cancel_goal()
+                    return {"ok": False, "state": -1, "state_text": "CANCELLED"}
+                if self.client.wait_for_result(rospy.Duration(0.1)):
+                    state = self.client.get_state()
+                    return {
+                        "ok": state == GoalStatus.SUCCEEDED,
+                        "state": int(state),
+                        "state_text": GOAL_STATUS_TEXT.get(state, str(state)),
+                        "intercepted": False,
+                    }
+                candidate = None
+                with self.lock:
+                    if self.detection_candidate is not None:
+                        candidate = dict(self.detection_candidate)
+                fresh = candidate and time.time() - candidate["stamp"] <= self.intercept_max_age
+                cooled_down = time.time() - self.last_intercept_time >= self.intercept_cooldown
+                stable = candidate and candidate["stable_frames"] >= self.intercept_stable_frames
+                allow_intercept = bool(
+                    wp.get("allow_vision_intercept", wp.get("id") != "home")
+                )
+                if allow_intercept and self.intercept_during_navigation and fresh and cooled_down and stable:
+                    self.publish_status(
+                        "target_intercept",
+                        "stable meter target detected; pausing navigation",
+                        {"waypoint": wp, "detection": candidate},
+                    )
+                    self.client.cancel_goal()
+                    self.client.wait_for_result(rospy.Duration(1.5))
+                    self.stop_robot()
+                    self.last_intercept_time = time.time()
+                    return {
+                        "ok": True,
+                        "state": GoalStatus.PREEMPTED,
+                        "state_text": "VISION_INTERCEPT",
+                        "intercepted": True,
+                        "detection": candidate,
+                    }
             self.client.cancel_goal()
             return {"ok": False, "state": -1, "state_text": "TIMEOUT"}
-        state = self.client.get_state()
-        return {"ok": state == GoalStatus.SUCCEEDED, "state": int(state), "state_text": GOAL_STATUS_TEXT.get(state, str(state))}
+        finally:
+            with self.lock:
+                self.navigation_active = False
 
     def run_visual_servo(self, wp):
         if self.dry_run:
@@ -337,6 +460,7 @@ class InspectionServoRouteRunner:
             "request_id": request_id,
             "task": str(wp.get("kimi_task", self.kimi_task)),
             "waypoint_id": wp.get("id"),
+            "expected_class": wp.get("expected_class", "any"),
         }
         with self.lock:
             self.kimi_results.pop(request_id, None)
@@ -358,14 +482,22 @@ class InspectionServoRouteRunner:
             self.latest_servo_status = {}
         env = os.environ.copy()
         self.servo_proc = subprocess.Popen(
-            ["rosrun", "eggy_bringup", "meter_visual_servo.py"],
+            [
+                "rosrun",
+                "eggy_bringup",
+                "meter_visual_servo.py",
+                "_target_class:=%s" % self.expected_class,
+            ],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             preexec_fn=os.setsid,
             env=env,
         )
         rospy.sleep(self.servo_startup_wait)
-        self.servo_request_pub.publish(String("start"))
+        self.servo_request_pub.publish(String(json.dumps({
+            "command": "start",
+            "target_class": self.expected_class,
+        })))
 
     def stop_servo_node(self):
         self.servo_request_pub.publish(String("stop"))
@@ -393,6 +525,7 @@ class InspectionServoRouteRunner:
         payload = {
             "stamp": now_sec(),
             "state": state,
+            "stage": state,
             "message": message,
             "busy": self.busy,
             "extra": extra,

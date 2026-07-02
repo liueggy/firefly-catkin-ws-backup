@@ -31,6 +31,8 @@ class MeterVisualServo:
         )
         self.enabled = bool(rospy.get_param("~enabled", True))
         self.require_scan = bool(rospy.get_param("~require_scan", True))
+        self.target_class = str(rospy.get_param("~target_class", "any"))
+        self.min_score = float(rospy.get_param("~min_score", 0.65))
 
         self.area_tolerance = float(rospy.get_param("~area_tolerance", 0.15))
         self.area_unlock_tolerance = float(rospy.get_param("~area_unlock_tolerance", 0.22))
@@ -43,11 +45,14 @@ class MeterVisualServo:
         self.center_kp = float(rospy.get_param("~center_kp", 0.55))
         self.center_deadband = float(rospy.get_param("~center_deadband", 0.06))
         self.search_wz = float(rospy.get_param("~search_wz", 0.45))
+        self.search_timeout = float(rospy.get_param("~search_timeout", 1.2))
         self.cmd_rate = float(rospy.get_param("~cmd_rate", 25.0))
         self.detection_timeout = float(rospy.get_param("~detection_timeout", 0.55))
         self.scan_timeout = float(rospy.get_param("~scan_timeout", 1.0))
         self.obstacle_stop = float(rospy.get_param("~obstacle_stop", 0.35))
         self.obstacle_slow = float(rospy.get_param("~obstacle_slow", 0.55))
+        self.braking_time = float(rospy.get_param("~braking_time", 0.45))
+        self.side_stop = float(rospy.get_param("~side_stop", 0.24))
         self.front_sector_deg = float(rospy.get_param("~front_sector_deg", 28.0))
         self.rear_sector_deg = float(rospy.get_param("~rear_sector_deg", 28.0))
         self.edge_lost_margin = float(rospy.get_param("~edge_lost_margin", 0.04))
@@ -94,6 +99,17 @@ class MeterVisualServo:
 
     def on_request(self, msg):
         text = (msg.data or "").strip().lower()
+        if text.startswith("{"):
+            try:
+                request = json.loads(msg.data)
+                command = str(request.get("command", "start")).lower()
+                target_class = str(request.get("target_class", "any")).lower()
+                if target_class in ("water_meter", "pressure_gauge", "any"):
+                    self.target_class = target_class
+                text = command
+            except Exception as exc:
+                self.publish_status("bad_request", str(exc))
+                return
         if text in ("start", "enable", "on"):
             self.enabled = True
             self.distance_locked = False
@@ -124,6 +140,10 @@ class MeterVisualServo:
             for det in detections:
                 cls = str(det.get("class_name", ""))
                 if cls not in ("pressure_gauge", "water_meter"):
+                    continue
+                if self.target_class not in ("", "any", cls):
+                    continue
+                if float(det.get("score", 0.0)) < self.min_score:
                     continue
                 x1, y1 = float(det["x1"]), float(det["y1"])
                 x2, y2 = float(det["x2"]), float(det["y2"])
@@ -226,10 +246,17 @@ class MeterVisualServo:
             direction = "rear"
         if dist is None:
             return (0.0, "no_%s_scan" % direction) if self.require_scan else (linear_x * 0.5, "no_scan_slow")
-        if dist < self.obstacle_stop:
+        dynamic_stop = self.obstacle_stop + abs(linear_x) * self.braking_time
+        if dist < dynamic_stop:
             return 0.0, "%s_obstacle_stop_%.2f" % (direction, dist)
         if dist < self.obstacle_slow:
             return linear_x * 0.45, "%s_obstacle_slow_%.2f" % (direction, dist)
+        if linear_x > 0:
+            left = self.sector_min(70.0, 22.0)
+            right = self.sector_min(-70.0, 22.0)
+            side_values = [value for value in (left, right) if value is not None]
+            if side_values and min(side_values) < self.side_stop:
+                return 0.0, "side_obstacle_stop_%.2f" % min(side_values)
         return linear_x, "clear_%.2f" % dist
 
     def compute_cmd(self):
@@ -246,13 +273,15 @@ class MeterVisualServo:
         if fresh_empty_frame or stale_target:
             self.distance_locked = False
             cmd = Twist()
-            if abs(self.last_center_error) > 0.05:
+            target_age = now - self.last_detection_time if self.last_detection_time else 999.0
+            if abs(self.last_center_error) > 0.05 and target_age <= self.search_timeout:
                 cmd.angular.z = self.search_wz if self.last_center_error < 0 else -self.search_wz
                 return cmd, "searching_lost_target", {
                     "last_center_error": round(self.last_center_error, 4),
+                    "target_age": round(target_age, 3),
                     "reason": "empty_frame" if fresh_empty_frame else "timeout",
                 }
-            return cmd, "no_target", {}
+            return cmd, "no_target", {"target_age": round(target_age, 3)}
 
         det = self.last_detection
         target = float(self.targets.get(det["class_name"], self.targets.get("default", 0.08)))
@@ -299,6 +328,7 @@ class MeterVisualServo:
         state = "servo_forward" if linear > 0 else "servo_backward" if linear < 0 else "blocked"
         return cmd, state, {
             "class_name": det["class_name"],
+            "target_class": self.target_class,
             "area_ratio": round(area, 5),
             "target_area_ratio": round(target, 5),
             "area_error": round(area_error, 4),

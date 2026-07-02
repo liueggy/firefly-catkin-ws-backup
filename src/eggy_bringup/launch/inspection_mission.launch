@@ -1,0 +1,30 @@
+<launch>
+  <arg name="dry_run" default="false" />
+  <arg name="default_frame" default="map" />
+  <arg name="base_frame" default="base_link" />
+  <arg name="image_topic" default="/camera/front/image/compressed" />
+  <arg name="kimi_api_base" default="http://127.0.0.1:8000" />
+  <arg name="start_kimi_bridge" default="true" />
+  <arg name="enable_kimi_after_servo" default="true" />
+  <arg name="intercept_during_navigation" default="true" />
+  <arg name="intercept_min_score" default="0.75" />
+  <arg name="intercept_stable_frames" default="4" />
+
+  <group if="$(arg start_kimi_bridge)">
+    <node pkg="eggy_bringup" type="kimi_inspection_bridge.py" name="kimi_inspection_bridge" output="screen">
+      <param name="image_topic" value="$(arg image_topic)" />
+      <param name="api_base" value="$(arg kimi_api_base)" />
+      <param name="default_task" value="meter" />
+    </node>
+  </group>
+
+  <node pkg="eggy_bringup" type="inspection_servo_route_runner.py" name="inspection_servo_route_runner" output="screen">
+    <param name="dry_run" value="$(arg dry_run)" />
+    <param name="default_frame" value="$(arg default_frame)" />
+    <param name="base_frame" value="$(arg base_frame)" />
+    <param name="enable_kimi_after_servo" value="$(arg enable_kimi_after_servo)" />
+    <param name="intercept_during_navigation" value="$(arg intercept_during_navigation)" />
+    <param name="intercept_min_score" value="$(arg intercept_min_score)" />
+    <param name="intercept_stable_frames" value="$(arg intercept_stable_frames)" />
+  </node>
+</launch>

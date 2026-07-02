@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 import math
 import os
 import subprocess
@@ -29,10 +30,22 @@ class FastAutoMapper:
         self.start_gmapping = rospy.get_param("~start_gmapping", False)
         self.gmapping_startup_delay = self.param_float("~gmapping_startup_delay", 3.0, 0.0, 20.0)
         self.status_rate_hz = self.param_float("~status_rate_hz", 2.0, 0.2, 10.0)
+        self.completion_enabled = bool(rospy.get_param("~completion_enabled", True))
+        self.completion_min_elapsed = self.param_float(
+            "~completion_min_elapsed", 60.0, 10.0, 1800.0
+        )
+        self.map_stable_sec = self.param_float("~map_stable_sec", 30.0, 5.0, 300.0)
+        self.frontier_stable_sec = self.param_float(
+            "~frontier_stable_sec", 15.0, 3.0, 120.0
+        )
+        self.map_growth_cells = int(rospy.get_param("~map_growth_cells", 30))
+        self.frontier_min_cells = int(rospy.get_param("~frontier_min_cells", 18))
+        self.min_known_cells = int(rospy.get_param("~min_known_cells", 800))
 
         self.cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=5)
         self.status_pub = rospy.Publisher("/auto_explore/status", String, queue_size=10, latch=True)
         rospy.Subscriber("/scan", LaserScan, self.scan_cb, queue_size=1)
+        rospy.Subscriber("/map", OccupancyGrid, self.map_cb, queue_size=1)
         rospy.Subscriber("/auto_explore/stop", Bool, self.stop_cb, queue_size=1)
         rospy.Subscriber("/auto_explore/stop_text", String, self.stop_text_cb, queue_size=1)
 
@@ -40,9 +53,17 @@ class FastAutoMapper:
         self.stop_requested = False
         self.last_progress_time = time.time()
         self.last_front = None
+        self.start_time = time.time()
         self.state = "init"
         self.state_until = 0.0
         self.turn_direction = 1.0
+        self.known_cells = 0
+        self.frontier_cells = 0
+        self.max_known_cells = 0
+        self.last_map_growth_time = time.time()
+        self.low_frontier_since = None
+        self.map_stamp = 0.0
+        self.stop_reason = ""
         rospy.on_shutdown(self.stop_motion)
 
     @staticmethod
@@ -63,11 +84,66 @@ class FastAutoMapper:
     def scan_cb(self, msg):
         self.scan = msg
 
+    def map_cb(self, msg):
+        width = int(msg.info.width)
+        height = int(msg.info.height)
+        data = msg.data
+        if width <= 2 or height <= 2 or len(data) != width * height:
+            return
+        known = sum(1 for value in data if value >= 0)
+        frontiers = 0
+        for y in range(1, height - 1):
+            row = y * width
+            for x in range(1, width - 1):
+                idx = row + x
+                if data[idx] != 0:
+                    continue
+                if (
+                    data[idx - 1] < 0
+                    or data[idx + 1] < 0
+                    or data[idx - width] < 0
+                    or data[idx + width] < 0
+                ):
+                    frontiers += 1
+        now = time.time()
+        if known >= self.max_known_cells + max(1, self.map_growth_cells):
+            self.max_known_cells = known
+            self.last_map_growth_time = now
+        else:
+            self.max_known_cells = max(self.max_known_cells, known)
+        if frontiers < self.frontier_min_cells:
+            if self.low_frontier_since is None:
+                self.low_frontier_since = now
+        else:
+            self.low_frontier_since = None
+        self.known_cells = known
+        self.frontier_cells = frontiers
+        self.map_stamp = now
+
     def publish_status(self, state, **extra):
-        fields = ["state={}".format(state), "elapsed={:.1f}".format(time.time() - self.start_time)]
-        for key, value in sorted(extra.items()):
-            fields.append("{}={}".format(key, value))
-        self.status_pub.publish(String(data=" ".join(fields)))
+        payload = {
+            "state": state,
+            "elapsed_sec": round(time.time() - self.start_time, 1),
+            "known_cells": self.known_cells,
+            "frontier_cells": self.frontier_cells,
+            "stop_reason": self.stop_reason,
+        }
+        payload.update(extra)
+        self.status_pub.publish(String(data=json.dumps(payload, ensure_ascii=False)))
+
+    def completion_reason(self, elapsed):
+        if not self.completion_enabled or elapsed < self.completion_min_elapsed:
+            return ""
+        if self.known_cells < self.min_known_cells or self.map_stamp <= 0:
+            return ""
+        map_stable = time.time() - self.last_map_growth_time >= self.map_stable_sec
+        frontier_stable = (
+            self.low_frontier_since is not None
+            and time.time() - self.low_frontier_since >= self.frontier_stable_sec
+        )
+        if map_stable and frontier_stable:
+            return "map_complete"
+        return ""
 
     def stop_motion(self):
         cmd = Twist()
@@ -216,7 +292,13 @@ class FastAutoMapper:
             while not rospy.is_shutdown() and not self.stop_requested:
                 elapsed = time.time() - self.start_time
                 if elapsed >= self.duration_sec:
+                    self.stop_reason = "time_limit"
                     self.publish_status("time_limit")
+                    break
+                completion = self.completion_reason(elapsed)
+                if completion:
+                    self.stop_reason = completion
+                    self.publish_status(completion)
                     break
                 self.step()
                 if time.time() - last_status >= 1.0 / self.status_rate_hz:
@@ -224,6 +306,8 @@ class FastAutoMapper:
                     last_status = time.time()
                 rate.sleep()
         finally:
+            if self.stop_requested and not self.stop_reason:
+                self.stop_reason = "manual_stop"
             self.stop_motion()
             self.save_current_map()
             if gmapping_proc:

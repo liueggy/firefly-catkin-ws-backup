@@ -4,16 +4,20 @@ project(eggy_bringup)
 find_package(OpenCV REQUIRED)
 
 find_package(catkin REQUIRED COMPONENTS
+  actionlib
   roscpp
+  rospy
   nav_msgs
   sensor_msgs
   std_msgs
   geometry_msgs
+  move_base_msgs
+  tf
   tf2_ros
 )
 
 catkin_package(
-  CATKIN_DEPENDS roscpp nav_msgs sensor_msgs std_msgs geometry_msgs tf2_ros
+  CATKIN_DEPENDS actionlib roscpp rospy nav_msgs sensor_msgs std_msgs geometry_msgs move_base_msgs tf tf2_ros
 )
 
 include_directories(
@@ -30,6 +34,14 @@ target_link_libraries(meter_rknn_detect_node ${catkin_LIBRARIES} ${OpenCV_LIBRAR
 
 install(TARGETS eggy_odom_fuser_node meter_rknn_detect_node
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+catkin_install_python(PROGRAMS
+  scripts/auto_map_explore.py
+  scripts/kimi_inspection_bridge.py
+  scripts/inspection_servo_route_runner.py
+  scripts/meter_visual_servo.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
 install(DIRECTORY launch config

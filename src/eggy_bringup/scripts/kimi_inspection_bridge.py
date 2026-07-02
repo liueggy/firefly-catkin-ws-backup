@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Bridge ROS compressed camera frames to the Kimi inspection HTTP API."""
 
