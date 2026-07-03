@@ -72,6 +72,9 @@ def modem_operator():
         matches = re.findall(pattern, output, re.IGNORECASE)
         if matches:
             return normalize_operator(matches[-1].strip())
+    numeric = re.findall(r'\+COPS:\s*\d+,\s*2,\s*"(\d{5,6})"', output)
+    if numeric:
+        return operator_from_plmn(numeric[-1])
     return ""
 
 
@@ -84,6 +87,16 @@ def normalize_operator(name):
     if "TELECOM" in upper or "CHN-CT" in upper:
         return "中国电信"
     return name
+
+
+def operator_from_plmn(plmn):
+    if plmn in ("46000", "46002", "46004", "46007", "46008"):
+        return "中国移动"
+    if plmn in ("46001", "46006", "46009"):
+        return "中国联通"
+    if plmn in ("46003", "46005", "46011"):
+        return "中国电信"
+    return plmn
 
 
 def build_status():
