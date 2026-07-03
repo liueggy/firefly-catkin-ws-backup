@@ -17,20 +17,20 @@ class FastAutoMapper:
         rospy.init_node("auto_mapper", anonymous=False)
 
         self.duration_sec = self.param_float("~duration_sec", 180.0, 5.0, 3600.0)
-        self.linear_speed = self.param_float("~linear_speed", 0.16, 0.03, 0.35)
+        self.linear_speed = self.param_float("~linear_speed", 0.25, 0.03, 0.35)
         self.turn_speed = self.param_float("~turn_speed", 0.45, 0.10, 0.90)
         self.backup_speed = self.param_float("~backup_speed", 0.08, 0.03, 0.18)
-        self.min_front_clearance = self.param_float("~min_front_clearance", 0.42, 0.20, 1.20)
+        self.min_front_clearance = self.param_float("~min_front_clearance", 0.20, 0.12, 1.20)
         self.slow_front_clearance = self.param_float("~slow_front_clearance", 1.05, 0.30, 2.50)
         self.predict_front_clearance = self.param_float("~predict_front_clearance", 1.45, 0.50, 3.50)
         self.side_clearance = self.param_float("~side_clearance", 0.32, 0.15, 1.00)
-        self.stop_clearance = self.param_float("~stop_clearance", 0.26, 0.12, 0.80)
+        self.stop_clearance = self.param_float("~stop_clearance", 0.18, 0.10, 0.80)
         self.stuck_timeout = self.param_float("~stuck_timeout", 2.5, 0.5, 10.0)
         self.scan_timeout = self.param_float("~scan_timeout", 1.0, 0.2, 5.0)
         self.command_rate_limit = self.param_float("~command_rate_limit", 0.10, 0.02, 0.40)
         self.angular_rate_limit = self.param_float("~angular_rate_limit", 0.18, 0.04, 0.60)
         self.obstacle_trigger_clearance = self.param_float(
-            "~obstacle_trigger_clearance", 0.78, 0.35, 2.00
+            "~obstacle_trigger_clearance", 0.20, 0.12, 2.00
         )
         self.free_path_clearance = self.param_float("~free_path_clearance", 0.68, 0.30, 2.50)
         self.free_path_max_range = self.param_float("~free_path_max_range", 3.5, 1.0, 8.0)

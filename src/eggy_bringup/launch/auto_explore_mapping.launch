@@ -1,18 +1,18 @@
 <launch>
   <arg name="duration_sec" default="180.0" />
-  <arg name="linear_speed" default="0.16" />
+  <arg name="linear_speed" default="0.25" />
   <arg name="turn_speed" default="0.45" />
   <arg name="backup_speed" default="0.08" />
-  <arg name="min_front_clearance" default="0.48" />
+  <arg name="min_front_clearance" default="0.20" />
   <arg name="slow_front_clearance" default="1.05" />
   <arg name="predict_front_clearance" default="1.45" />
   <arg name="side_clearance" default="0.36" />
-  <arg name="stop_clearance" default="0.30" />
+  <arg name="stop_clearance" default="0.18" />
   <arg name="stuck_timeout" default="2.5" />
   <arg name="scan_timeout" default="1.0" />
   <arg name="command_rate_limit" default="0.12" />
   <arg name="angular_rate_limit" default="0.18" />
-  <arg name="obstacle_trigger_clearance" default="0.78" />
+  <arg name="obstacle_trigger_clearance" default="0.20" />
   <arg name="free_path_clearance" default="0.68" />
   <arg name="free_path_max_range" default="3.5" />
   <arg name="free_path_angle_range" default="125.0" />
