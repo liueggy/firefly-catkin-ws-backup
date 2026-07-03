@@ -37,7 +37,7 @@ SCAN_TIMEOUT_S = 1.0    # /scan 超过 1s 无更新视为离线
 ODOM_TIMEOUT_S = 1.0
 CAMERA_TIMEOUT_S = 2.0
 KEY_NODES = ['/move_base', '/rplidarNode', '/stm32_base_driver',
-             '/slam_gmapping', '/eggy_external_imu_odom_fuser',
+             '/eggy_external_imu_odom_fuser',
              '/ros_qt5_gui_adapter', '/rosbridge_websocket', '/eggy_camera']
 
 MOVE_BASE_STATUS = {
@@ -71,6 +71,7 @@ class HealthAggregator:
         self.flag_stop = None
         self.nav_status = None      # 最近一个 GoalStatus 的 status
         self.nav_text = ''
+        self.nav_status_time = None
         # 收编其它发布者(如 stm32_base_driver)发到 /diagnostics 的状态，
         # 缓存后并入自己的完整数组统一发布，避免 Qt 端两套数组交替跳闪。
         self.external_status = {}   # name -> (DiagnosticStatus, last_seen_time)
@@ -131,11 +132,14 @@ class HealthAggregator:
         with self.lock:
             if msg.status_list:
                 s = msg.status_list[-1]
+                if s.status != self.nav_status:
+                    self.nav_status_time = rospy.Time.now()
                 self.nav_status = s.status
                 self.nav_text = s.text
             else:
                 self.nav_status = None
                 self.nav_text = ''
+                self.nav_status_time = None
 
     # ---- 系统信息 ----
     def _read_system(self):
@@ -211,9 +215,18 @@ class HealthAggregator:
             alive = set(rosnode.get_node_names())
         except Exception:
             alive = set()
-        pairs = []
+        map_server_alive = any(
+            n == '/map_server' or n.startswith('/map_server_') for n in alive)
+        amcl_mode = '/amcl' in alive or map_server_alive
+        mode_nodes = ['/amcl'] if amcl_mode else ['/slam_gmapping']
+        required_nodes = KEY_NODES + mode_nodes
+        pairs = [('定位模式', 'AMCL' if amcl_mode else '建图')]
+        if amcl_mode:
+            pairs.append(('/map_server', '在线' if map_server_alive else '掉线'))
         missing = []
-        for n in KEY_NODES:
+        if amcl_mode and not map_server_alive:
+            missing.append('/map_server')
+        for n in required_nodes:
             ok = n in alive
             pairs.append((n, '在线' if ok else '掉线'))
             if not ok:
@@ -311,7 +324,10 @@ class HealthAggregator:
 
         # 7. 导航状态
         with self.lock:
-            ns = self.nav_status; nt = self.nav_text
+            ns = self.nav_status; nt = self.nav_text; nst = self.nav_status_time
+        if ns is not None and ns != 1 and nst is not None and (
+                now - nst).to_sec() > 5.0:
+            ns = None
         if ns is None:
             arr.status.append(make_status(
                 DiagnosticStatus.OK, 'move_base状态', '空闲(无目标)',
