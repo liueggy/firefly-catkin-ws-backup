@@ -1,0 +1,14 @@
+[Unit]
+Description=SSH reverse tunnels to toy server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/ssh -i /root/.ssh/toy_rsa -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -N -R 22222:localhost:22 -R 29090:localhost:9090 root@167.71.214.73
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
