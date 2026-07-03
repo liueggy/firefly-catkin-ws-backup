@@ -1,6 +1,7 @@
 <launch>
   <arg name="duration_sec" default="180.0" />
   <arg name="linear_speed" default="0.25" />
+  <arg name="lateral_speed" default="0.20" />
   <arg name="turn_speed" default="0.45" />
   <arg name="backup_speed" default="0.08" />
   <arg name="min_front_clearance" default="0.25" />
@@ -21,6 +22,11 @@
   <arg name="turn_in_place_heading" default="28.0" />
   <arg name="heading_gain" default="1.20" />
   <arg name="cruise_centering_gain" default="0.18" />
+  <arg name="omni_enabled" default="true" />
+  <arg name="omni_heading_limit" default="125.0" />
+  <arg name="omni_min_speed_scale" default="0.35" />
+  <arg name="omni_wz_gain" default="0.10" />
+  <arg name="keep_heading_wz_limit" default="0.18" />
   <arg name="corridor_lock_sec" default="1.4" />
   <arg name="decision_lock_sec" default="1.1" />
   <arg name="failed_heading_cooldown" default="4.0" />
@@ -47,6 +53,7 @@
   <node pkg="eggy_bringup" type="auto_map_explore.py" name="auto_mapper" output="screen">
     <param name="duration_sec" value="$(arg duration_sec)" />
     <param name="linear_speed" value="$(arg linear_speed)" />
+    <param name="lateral_speed" value="$(arg lateral_speed)" />
     <param name="turn_speed" value="$(arg turn_speed)" />
     <param name="backup_speed" value="$(arg backup_speed)" />
     <param name="min_front_clearance" value="$(arg min_front_clearance)" />
@@ -67,6 +74,11 @@
     <param name="turn_in_place_heading" value="$(arg turn_in_place_heading)" />
     <param name="heading_gain" value="$(arg heading_gain)" />
     <param name="cruise_centering_gain" value="$(arg cruise_centering_gain)" />
+    <param name="omni_enabled" value="$(arg omni_enabled)" />
+    <param name="omni_heading_limit" value="$(arg omni_heading_limit)" />
+    <param name="omni_min_speed_scale" value="$(arg omni_min_speed_scale)" />
+    <param name="omni_wz_gain" value="$(arg omni_wz_gain)" />
+    <param name="keep_heading_wz_limit" value="$(arg keep_heading_wz_limit)" />
     <param name="corridor_lock_sec" value="$(arg corridor_lock_sec)" />
     <param name="decision_lock_sec" value="$(arg decision_lock_sec)" />
     <param name="failed_heading_cooldown" value="$(arg failed_heading_cooldown)" />

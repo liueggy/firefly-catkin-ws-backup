@@ -18,6 +18,7 @@ class FastAutoMapper:
 
         self.duration_sec = self.param_float("~duration_sec", 180.0, 5.0, 3600.0)
         self.linear_speed = self.param_float("~linear_speed", 0.25, 0.03, 0.35)
+        self.lateral_speed = self.param_float("~lateral_speed", 0.20, 0.03, 0.35)
         self.turn_speed = self.param_float("~turn_speed", 0.45, 0.10, 0.90)
         self.backup_speed = self.param_float("~backup_speed", 0.08, 0.03, 0.18)
         self.min_front_clearance = self.param_float("~min_front_clearance", 0.25, 0.12, 1.20)
@@ -40,6 +41,11 @@ class FastAutoMapper:
         self.turn_in_place_heading = self.param_float("~turn_in_place_heading", 28.0, 10.0, 70.0)
         self.heading_gain = self.param_float("~heading_gain", 1.20, 0.30, 2.50)
         self.cruise_centering_gain = self.param_float("~cruise_centering_gain", 0.18, 0.0, 0.80)
+        self.omni_enabled = bool(rospy.get_param("~omni_enabled", True))
+        self.omni_heading_limit = self.param_float("~omni_heading_limit", 125.0, 45.0, 170.0)
+        self.omni_min_speed_scale = self.param_float("~omni_min_speed_scale", 0.35, 0.10, 1.00)
+        self.omni_wz_gain = self.param_float("~omni_wz_gain", 0.10, 0.0, 0.80)
+        self.keep_heading_wz_limit = self.param_float("~keep_heading_wz_limit", 0.18, 0.0, 0.60)
         self.corridor_lock_sec = self.param_float("~corridor_lock_sec", 1.4, 0.2, 5.0)
         self.decision_lock_sec = self.param_float("~decision_lock_sec", 1.1, 0.2, 5.0)
         self.failed_heading_cooldown = self.param_float("~failed_heading_cooldown", 4.0, 1.0, 20.0)
@@ -90,6 +96,7 @@ class FastAutoMapper:
         self.map_stamp = 0.0
         self.stop_reason = ""
         self.last_cmd_vx = 0.0
+        self.last_cmd_vy = 0.0
         self.last_cmd_wz = 0.0
         self.target_heading_deg = 0.0
         self.target_clearance = 0.0
@@ -165,6 +172,7 @@ class FastAutoMapper:
             "frontier_cells": self.frontier_cells,
             "stop_reason": self.stop_reason,
             "last_cmd_vx": round(self.last_cmd_vx, 3),
+            "last_cmd_vy": round(self.last_cmd_vy, 3),
             "last_cmd_wz": round(self.last_cmd_wz, 3),
             "target_heading_deg": round(self.target_heading_deg, 1),
             "target_clearance": round(self.target_clearance, 2),
@@ -191,6 +199,7 @@ class FastAutoMapper:
 
     def stop_motion(self):
         self.last_cmd_vx = 0.0
+        self.last_cmd_vy = 0.0
         self.last_cmd_wz = 0.0
         cmd = Twist()
         for _ in range(6):
@@ -372,16 +381,20 @@ class FastAutoMapper:
             return min(target, current + max_step)
         return max(target, current - max_step)
 
-    def command(self, vx=0.0, wz=0.0, smooth=True):
+    def command(self, vx=0.0, wz=0.0, vy=0.0, smooth=True):
         vx = self.clamp(vx, -self.backup_speed, self.linear_speed)
+        vy = self.clamp(vy, -self.lateral_speed, self.lateral_speed)
         wz = self.clamp(wz, -self.turn_speed, self.turn_speed)
         if smooth:
             vx = self.approach(self.last_cmd_vx, vx, self.command_rate_limit)
+            vy = self.approach(self.last_cmd_vy, vy, self.command_rate_limit)
             wz = self.approach(self.last_cmd_wz, wz, self.angular_rate_limit)
         self.last_cmd_vx = vx
+        self.last_cmd_vy = vy
         self.last_cmd_wz = wz
         cmd = Twist()
         cmd.linear.x = vx
+        cmd.linear.y = vy
         cmd.angular.z = wz
         self.cmd_pub.publish(cmd)
 
@@ -468,7 +481,7 @@ class FastAutoMapper:
 
         if now < self.state_until:
             if self.state == "backup":
-                self.command(-self.backup_speed, self.turn_direction * self.turn_speed * 0.45)
+                self.command(-self.backup_speed, self.turn_direction * self.turn_speed * 0.25)
             elif self.state == "turn":
                 self.command(0.0, self.turn_direction * self.turn_speed * 0.85)
             return
@@ -487,9 +500,14 @@ class FastAutoMapper:
             if front_blocked:
                 self.enter_recovery(now, "corridor_blocked")
                 return
-            self.state = "enter_corridor"
-            steer = self.cruise_steer(left_front, right_front, left_side, right_side, limit=0.22)
-            self.command(self.linear_speed * 0.82, self.turn_speed * steer)
+            self.state = "omni_enter_corridor"
+            vx, vy, wz = self.omni_vector_command(
+                self.target_heading_deg,
+                self.target_clearance,
+                heading_weight=0.45,
+                speed_cap=0.82,
+            )
+            self.command(vx, wz, vy=vy)
             return
 
         if not front_blocked:
@@ -522,29 +540,56 @@ class FastAutoMapper:
             self.enter_recovery(now, "no_corridor")
             return
 
-        self.turn_direction = 1.0 if self.target_heading_deg >= 0.0 else -1.0
         heading_abs = abs(self.target_heading_deg)
-        heading_steer = self.clamp(
-            math.radians(self.target_heading_deg) * self.heading_gain,
-            -1.0,
-            1.0,
-        )
+        if self.omni_enabled and heading_abs <= self.omni_heading_limit:
+            self.corridor_lock_until = now + self.corridor_lock_sec
+            vx, vy, wz = self.omni_vector_command(
+                self.target_heading_deg,
+                self.target_clearance,
+                heading_weight=0.70,
+                speed_cap=0.82,
+            )
+            self.state = "omni_vector"
+            self.command(vx, wz, vy=vy)
+            return
+
+        heading_steer = self.heading_turn_command(self.target_heading_deg)
+        self.turn_direction = 1.0 if self.target_heading_deg >= 0.0 else -1.0
         if heading_abs > self.turn_in_place_heading:
             self.state = "turn_to_corridor"
             self.command(0.0, self.turn_speed * heading_steer)
             return
 
-        speed_scale = self.clamp(
-            self.target_clearance / max(self.free_path_max_range, 0.1),
-            0.35,
-            0.75,
+        vx, vy, wz = self.omni_vector_command(
+            self.target_heading_deg,
+            self.target_clearance,
+            heading_weight=0.65,
+            speed_cap=0.70,
         )
-        if heading_abs > self.turn_to_gap_tolerance:
-            speed_scale *= 0.55
-        if heading_abs <= self.turn_to_gap_tolerance:
-            self.corridor_lock_until = now + self.corridor_lock_sec
+        self.corridor_lock_until = now + self.corridor_lock_sec
         self.state = "enter_corridor"
-        self.command(self.linear_speed * speed_scale, self.turn_speed * heading_steer)
+        self.command(vx, wz, vy=vy)
+
+    def heading_turn_command(self, heading_deg):
+        return self.clamp(math.radians(heading_deg) * self.heading_gain, -1.0, 1.0)
+
+    def omni_vector_command(self, heading_deg, clearance, heading_weight=0.65, speed_cap=0.85):
+        heading_deg = self.clamp(heading_deg, -self.omni_heading_limit, self.omni_heading_limit)
+        heading_rad = math.radians(heading_deg)
+        clearance_scale = self.clamp(
+            clearance / max(self.free_path_max_range, 0.1),
+            self.omni_min_speed_scale,
+            speed_cap,
+        )
+        speed = self.linear_speed * clearance_scale
+        vx = speed * math.cos(heading_rad)
+        vy = self.lateral_speed * clearance_scale * math.sin(heading_rad)
+        wz = self.turn_speed * self.clamp(
+            math.radians(heading_deg) * self.omni_wz_gain * heading_weight,
+            -self.keep_heading_wz_limit,
+            self.keep_heading_wz_limit,
+        )
+        return vx, vy, wz
 
     def cruise_steer(self, left_front, right_front, left_side, right_side, limit):
         clearance_balance = (left_front - right_front) / max(left_front + right_front, 0.2)
@@ -572,7 +617,7 @@ class FastAutoMapper:
         self.corridor_lock_until = 0.0
         self.last_progress_time = now
         self.publish_status("recovery_" + reason)
-        self.command(-self.backup_speed, self.turn_direction * self.turn_speed * 0.45)
+        self.command(-self.backup_speed, self.turn_direction * self.turn_speed * 0.25)
 
     def run(self):
         self.start_time = time.time()
