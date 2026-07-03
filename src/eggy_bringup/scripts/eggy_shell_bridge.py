@@ -4,6 +4,7 @@
 import codecs
 import json
 import os
+import re
 import selectors
 import shlex
 import signal
@@ -42,6 +43,7 @@ BLOCKED_WORDS = {
     "chmod", "chown", "chgrp", "killall", "pkill",
 }
 SHELL_META = {"|", "||", "&&", ";", ">", ">>", "<", "<<", "&"}
+ROSLAUNCH_PARAM = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*:=[A-Za-z0-9_./:+-]+$")
 
 
 def json_message(**fields):
@@ -64,6 +66,20 @@ def validate_command(command):
     if any(part in BLOCKED_WORDS for part in lowered):
         raise ValueError("destructive or privileged command pattern blocked")
     program = os.path.basename(argv[0]).lower()
+    if program == "roslaunch":
+        if len(argv) < 3 or argv[1] != "eggy_bringup" or argv[2] != "auto_explore_mapping.launch":
+            raise ValueError("only auto_explore_mapping.launch can be started from this terminal")
+        for part in argv[3:]:
+            if not ROSLAUNCH_PARAM.match(part):
+                raise ValueError("auto mapping roslaunch arguments must be name:=value pairs")
+        return argv, True
+    if program == "rostopic" and len(argv) >= 6 and lowered[1] == "pub":
+        once_flag = argv[2] in ("-1", "--once")
+        stop_topic = argv[3] == "/auto_explore/stop"
+        stop_msg = argv[4] == "std_msgs/Bool" and argv[5].lower() in ("true", "false", "1", "0")
+        if once_flag and stop_topic and stop_msg:
+            return argv, True
+        raise ValueError("only publishing /auto_explore/stop is allowed")
     if program in PLAIN_COMMANDS:
         if program == "find" and any(part in ("-delete", "-exec", "-execdir", "-ok", "-okdir") for part in lowered):
             raise ValueError("mutating find actions are not allowed")
