@@ -21,10 +21,17 @@ class FastAutoMapper:
         self.turn_speed = self.param_float("~turn_speed", 0.45, 0.10, 0.90)
         self.backup_speed = self.param_float("~backup_speed", 0.08, 0.03, 0.18)
         self.min_front_clearance = self.param_float("~min_front_clearance", 0.42, 0.20, 1.20)
-        self.slow_front_clearance = self.param_float("~slow_front_clearance", 0.75, 0.30, 2.00)
+        self.slow_front_clearance = self.param_float("~slow_front_clearance", 1.05, 0.30, 2.50)
+        self.predict_front_clearance = self.param_float("~predict_front_clearance", 1.45, 0.50, 3.50)
         self.side_clearance = self.param_float("~side_clearance", 0.32, 0.15, 1.00)
         self.stop_clearance = self.param_float("~stop_clearance", 0.26, 0.12, 0.80)
         self.stuck_timeout = self.param_float("~stuck_timeout", 2.5, 0.5, 10.0)
+        self.scan_timeout = self.param_float("~scan_timeout", 1.0, 0.2, 5.0)
+        self.command_rate_limit = self.param_float("~command_rate_limit", 0.10, 0.02, 0.40)
+        self.angular_rate_limit = self.param_float("~angular_rate_limit", 0.18, 0.04, 0.60)
+        self.end_spin_enabled = bool(rospy.get_param("~end_spin_enabled", True))
+        self.end_spin_rotations = self.param_float("~end_spin_rotations", 2.0, 0.0, 5.0)
+        self.end_spin_speed = self.param_float("~end_spin_speed", 0.45, 0.15, 0.80)
         self.save_map = rospy.get_param("~save_map", True)
         self.map_path = rospy.get_param("~map_path", "/root/catkin_ws/maps/auto_explore_map")
         self.start_gmapping = rospy.get_param("~start_gmapping", False)
@@ -50,6 +57,7 @@ class FastAutoMapper:
         rospy.Subscriber("/auto_explore/stop_text", String, self.stop_text_cb, queue_size=1)
 
         self.scan = None
+        self.scan_stamp = 0.0
         self.stop_requested = False
         self.last_progress_time = time.time()
         self.last_front = None
@@ -64,6 +72,9 @@ class FastAutoMapper:
         self.low_frontier_since = None
         self.map_stamp = 0.0
         self.stop_reason = ""
+        self.last_cmd_vx = 0.0
+        self.last_cmd_wz = 0.0
+        self.turn_hold_until = 0.0
         rospy.on_shutdown(self.stop_motion)
 
     @staticmethod
@@ -83,6 +94,7 @@ class FastAutoMapper:
 
     def scan_cb(self, msg):
         self.scan = msg
+        self.scan_stamp = time.time()
 
     def map_cb(self, msg):
         width = int(msg.info.width)
@@ -127,6 +139,8 @@ class FastAutoMapper:
             "known_cells": self.known_cells,
             "frontier_cells": self.frontier_cells,
             "stop_reason": self.stop_reason,
+            "last_cmd_vx": round(self.last_cmd_vx, 3),
+            "last_cmd_wz": round(self.last_cmd_wz, 3),
         }
         payload.update(extra)
         self.status_pub.publish(String(data=json.dumps(payload, ensure_ascii=False)))
@@ -146,10 +160,24 @@ class FastAutoMapper:
         return ""
 
     def stop_motion(self):
+        self.last_cmd_vx = 0.0
+        self.last_cmd_wz = 0.0
         cmd = Twist()
         for _ in range(6):
             self.cmd_pub.publish(cmd)
             rospy.sleep(0.03)
+
+    def end_spin(self):
+        if not self.end_spin_enabled or self.end_spin_rotations <= 0.0:
+            return
+        self.publish_status("end_spin", rotations=self.end_spin_rotations)
+        duration = (2.0 * math.pi * self.end_spin_rotations) / self.end_spin_speed
+        deadline = time.time() + duration
+        rate = rospy.Rate(20)
+        while time.time() < deadline and not rospy.is_shutdown():
+            self.command(0.0, self.end_spin_speed, smooth=False)
+            rate.sleep()
+        self.stop_motion()
 
     def sector_min(self, center_deg, width_deg, max_range=8.0):
         if self.scan is None:
@@ -175,12 +203,55 @@ class FastAutoMapper:
                 found = True
         return best if found else max_range
 
+    def sector_mean(self, center_deg, width_deg, max_range=5.0):
+        if self.scan is None:
+            return 0.0
+        angle_min = self.scan.angle_min
+        angle_inc = self.scan.angle_increment
+        if angle_inc == 0.0:
+            return 0.0
+        center = math.radians(center_deg)
+        half = math.radians(width_deg) * 0.5
+        low = center - half
+        high = center + half
+        values = []
+        for idx, value in enumerate(self.scan.ranges):
+            if not math.isfinite(value):
+                continue
+            if value < self.scan.range_min or value > min(self.scan.range_max, max_range):
+                continue
+            angle = angle_min + idx * angle_inc
+            if low <= angle <= high:
+                values.append(value)
+        if not values:
+            return max_range
+        values.sort()
+        cut = max(1, int(len(values) * 0.35))
+        return sum(values[:cut]) / float(cut)
+
     def choose_turn_direction(self):
-        left = self.sector_min(65, 80)
-        right = self.sector_min(-65, 80)
+        left = self.sector_mean(45, 90) + 0.45 * self.sector_mean(90, 60)
+        right = self.sector_mean(-45, 90) + 0.45 * self.sector_mean(-90, 60)
         return 1.0 if left >= right else -1.0
 
-    def command(self, vx=0.0, wz=0.0):
+    @staticmethod
+    def clamp(value, lower, upper):
+        return max(lower, min(upper, value))
+
+    @staticmethod
+    def approach(current, target, max_step):
+        if target > current:
+            return min(target, current + max_step)
+        return max(target, current - max_step)
+
+    def command(self, vx=0.0, wz=0.0, smooth=True):
+        vx = self.clamp(vx, -self.backup_speed, self.linear_speed)
+        wz = self.clamp(wz, -self.turn_speed, self.turn_speed)
+        if smooth:
+            vx = self.approach(self.last_cmd_vx, vx, self.command_rate_limit)
+            wz = self.approach(self.last_cmd_wz, wz, self.angular_rate_limit)
+        self.last_cmd_vx = vx
+        self.last_cmd_wz = wz
         cmd = Twist()
         cmd.linear.x = vx
         cmd.angular.z = wz
@@ -235,12 +306,29 @@ class FastAutoMapper:
         while self.scan is None and time.time() < deadline and not rospy.is_shutdown():
             rospy.sleep(0.05)
 
+    def wait_map_ready(self):
+        self.publish_status("waiting_map")
+        try:
+            rospy.wait_for_message("/map", OccupancyGrid, timeout=15.0)
+        except Exception as exc:
+            rospy.logwarn("No /map before exploration: %s", exc)
+
     def step(self):
         now = time.time()
+        if self.scan_stamp <= 0.0 or now - self.scan_stamp > self.scan_timeout:
+            self.state = "scan_timeout"
+            self.stop_reason = "scan_timeout"
+            self.stop_requested = True
+            self.stop_motion()
+            return
+
         front = self.sector_min(0, 34)
-        front_wide = self.sector_min(0, 70)
-        left = self.sector_min(65, 80)
-        right = self.sector_min(-65, 80)
+        front_wide = self.sector_min(0, 76)
+        front_predict = self.sector_mean(0, 118, max_range=4.0)
+        left_front = self.sector_mean(38, 76, max_range=4.0)
+        right_front = self.sector_mean(-38, 76, max_range=4.0)
+        left_side = self.sector_min(82, 52, max_range=3.0)
+        right_side = self.sector_min(-82, 52, max_range=3.0)
 
         if self.last_front is None or abs(front - self.last_front) > 0.08:
             self.last_progress_time = now
@@ -255,31 +343,57 @@ class FastAutoMapper:
             if self.state == "backup":
                 self.command(-self.backup_speed, self.turn_direction * self.turn_speed * 0.45)
             elif self.state == "turn":
-                self.command(0.0, self.turn_direction * self.turn_speed)
+                self.command(0.0, self.turn_direction * self.turn_speed * 0.85)
             return
 
-        if front < self.min_front_clearance or left < self.side_clearance or right < self.side_clearance:
+        hard_blocked = (
+            front < self.min_front_clearance
+            or left_side < self.side_clearance
+            or right_side < self.side_clearance
+        )
+        if hard_blocked:
             self.state = "turn"
             self.turn_direction = self.choose_turn_direction()
-            self.state_until = now + 0.8
-            self.command(0.0, self.turn_direction * self.turn_speed)
+            self.state_until = now + 0.55
+            self.command(0.0, self.turn_direction * self.turn_speed * 0.80)
             return
 
         if now - self.last_progress_time > self.stuck_timeout:
             self.state = "turn"
             self.turn_direction = self.choose_turn_direction()
-            self.state_until = now + 1.2
+            self.state_until = now + 0.9
             self.last_progress_time = now
-            self.command(0.0, self.turn_direction * self.turn_speed)
+            self.command(0.0, self.turn_direction * self.turn_speed * 0.75)
             return
 
-        self.state = "forward"
+        risk = 0.0
+        if front_predict < self.predict_front_clearance:
+            risk = max(risk, (self.predict_front_clearance - front_predict) / self.predict_front_clearance)
         if front < self.slow_front_clearance:
-            vx = self.linear_speed * 0.55
-        else:
-            vx = self.linear_speed
-        balance = max(-1.0, min(1.0, (left - right) / max(left + right, 0.1)))
-        self.command(vx, 0.35 * balance)
+            risk = max(risk, (self.slow_front_clearance - front) / self.slow_front_clearance)
+        risk = self.clamp(risk, 0.0, 1.0)
+
+        if risk > 0.10 and now >= self.turn_hold_until:
+            self.turn_direction = 1.0 if left_front >= right_front else -1.0
+            self.turn_hold_until = now + 1.3
+
+        clearance_balance = (left_front - right_front) / max(left_front + right_front, 0.2)
+        side_balance = 0.0
+        if left_side < self.side_clearance * 1.8:
+            side_balance -= (self.side_clearance * 1.8 - left_side) / (self.side_clearance * 1.8)
+        if right_side < self.side_clearance * 1.8:
+            side_balance += (self.side_clearance * 1.8 - right_side) / (self.side_clearance * 1.8)
+        steer = 0.35 * clearance_balance + 0.55 * side_balance
+        if risk > 0.10:
+            steer += self.turn_direction * (0.22 + 0.58 * risk)
+
+        speed_scale = 1.0 - 0.72 * risk
+        if abs(steer) > 0.45:
+            speed_scale *= 0.78
+        vx = self.linear_speed * self.clamp(speed_scale, 0.24, 1.0)
+        wz = self.turn_speed * self.clamp(steer, -1.0, 1.0)
+        self.state = "curve_avoid" if risk > 0.10 or abs(steer) > 0.18 else "cruise"
+        self.command(vx, wz)
 
     def run(self):
         self.start_time = time.time()
@@ -287,6 +401,7 @@ class FastAutoMapper:
         try:
             self.wait_ready()
             gmapping_proc = self.start_gmapping_process()
+            self.wait_map_ready()
             rate = rospy.Rate(20)
             last_status = 0.0
             while not rospy.is_shutdown() and not self.stop_requested:
@@ -310,6 +425,8 @@ class FastAutoMapper:
                 self.stop_reason = "manual_stop"
             self.stop_motion()
             self.save_current_map()
+            if self.stop_reason in ("time_limit", "map_complete"):
+                self.end_spin()
             if gmapping_proc:
                 gmapping_proc.terminate()
                 try:

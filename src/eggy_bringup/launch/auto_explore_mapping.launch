@@ -1,13 +1,20 @@
 <launch>
   <arg name="duration_sec" default="180.0" />
-  <arg name="linear_speed" default="0.16" />
+  <arg name="linear_speed" default="0.12" />
   <arg name="turn_speed" default="0.45" />
   <arg name="backup_speed" default="0.08" />
-  <arg name="min_front_clearance" default="0.42" />
-  <arg name="slow_front_clearance" default="0.75" />
-  <arg name="side_clearance" default="0.32" />
-  <arg name="stop_clearance" default="0.26" />
+  <arg name="min_front_clearance" default="0.48" />
+  <arg name="slow_front_clearance" default="1.05" />
+  <arg name="predict_front_clearance" default="1.45" />
+  <arg name="side_clearance" default="0.36" />
+  <arg name="stop_clearance" default="0.30" />
   <arg name="stuck_timeout" default="2.5" />
+  <arg name="scan_timeout" default="1.0" />
+  <arg name="command_rate_limit" default="0.10" />
+  <arg name="angular_rate_limit" default="0.18" />
+  <arg name="end_spin_enabled" default="true" />
+  <arg name="end_spin_rotations" default="2.0" />
+  <arg name="end_spin_speed" default="0.45" />
   <arg name="save_map" default="true" />
   <arg name="map_path" default="/root/catkin_ws/maps/auto_explore_map" />
   <arg name="start_gmapping" default="false" />
@@ -29,9 +36,16 @@
     <param name="backup_speed" value="$(arg backup_speed)" />
     <param name="min_front_clearance" value="$(arg min_front_clearance)" />
     <param name="slow_front_clearance" value="$(arg slow_front_clearance)" />
+    <param name="predict_front_clearance" value="$(arg predict_front_clearance)" />
     <param name="side_clearance" value="$(arg side_clearance)" />
     <param name="stop_clearance" value="$(arg stop_clearance)" />
     <param name="stuck_timeout" value="$(arg stuck_timeout)" />
+    <param name="scan_timeout" value="$(arg scan_timeout)" />
+    <param name="command_rate_limit" value="$(arg command_rate_limit)" />
+    <param name="angular_rate_limit" value="$(arg angular_rate_limit)" />
+    <param name="end_spin_enabled" value="$(arg end_spin_enabled)" />
+    <param name="end_spin_rotations" value="$(arg end_spin_rotations)" />
+    <param name="end_spin_speed" value="$(arg end_spin_speed)" />
     <param name="save_map" value="$(arg save_map)" />
     <param name="map_path" value="$(arg map_path)" />
     <param name="start_gmapping" value="$(arg start_gmapping)" />
