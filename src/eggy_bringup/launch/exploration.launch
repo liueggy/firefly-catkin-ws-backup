@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
   <!-- GMapping + move_base/TEB + explore_lite for the Eggy mecanum base. -->
-  <arg name="start_gmapping" default="true" />
+  <!-- The normal board startup already provides slam_gmapping. -->
+  <arg name="start_gmapping" default="false" />
   <arg name="start_move_base" default="true" />
   <arg name="start_explore" default="true" />
   <arg name="scan_topic" default="/scan" />
