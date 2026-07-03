@@ -24,20 +24,22 @@ class FastAutoMapper:
         self.slow_front_clearance = self.param_float("~slow_front_clearance", 1.05, 0.30, 2.50)
         self.predict_front_clearance = self.param_float("~predict_front_clearance", 1.45, 0.50, 3.50)
         self.side_clearance = self.param_float("~side_clearance", 0.32, 0.15, 1.00)
-        self.corridor_side_clearance = self.param_float(
-            "~corridor_side_clearance", 0.24, 0.12, 0.80
-        )
         self.stop_clearance = self.param_float("~stop_clearance", 0.26, 0.12, 0.80)
         self.stuck_timeout = self.param_float("~stuck_timeout", 2.5, 0.5, 10.0)
         self.scan_timeout = self.param_float("~scan_timeout", 1.0, 0.2, 5.0)
         self.command_rate_limit = self.param_float("~command_rate_limit", 0.10, 0.02, 0.40)
         self.angular_rate_limit = self.param_float("~angular_rate_limit", 0.18, 0.04, 0.60)
-        self.gap_heading_range = self.param_float("~gap_heading_range", 95.0, 35.0, 135.0)
-        self.gap_heading_step = self.param_float("~gap_heading_step", 10.0, 3.0, 20.0)
-        self.gap_width = self.param_float("~gap_width", 34.0, 16.0, 70.0)
-        self.heading_gain = self.param_float("~heading_gain", 1.15, 0.30, 2.50)
-        self.heading_hold_sec = self.param_float("~heading_hold_sec", 0.8, 0.1, 3.0)
-        self.forward_bias = self.param_float("~forward_bias", 0.18, 0.0, 0.80)
+        self.obstacle_trigger_clearance = self.param_float(
+            "~obstacle_trigger_clearance", 0.78, 0.35, 2.00
+        )
+        self.free_path_clearance = self.param_float("~free_path_clearance", 0.68, 0.30, 2.50)
+        self.free_path_max_range = self.param_float("~free_path_max_range", 3.5, 1.0, 8.0)
+        self.free_path_angle_range = self.param_float("~free_path_angle_range", 125.0, 45.0, 170.0)
+        self.min_gap_span_deg = self.param_float("~min_gap_span_deg", 18.0, 5.0, 60.0)
+        self.turn_to_gap_tolerance = self.param_float("~turn_to_gap_tolerance", 10.0, 3.0, 25.0)
+        self.turn_in_place_heading = self.param_float("~turn_in_place_heading", 28.0, 10.0, 70.0)
+        self.heading_gain = self.param_float("~heading_gain", 1.20, 0.30, 2.50)
+        self.cruise_centering_gain = self.param_float("~cruise_centering_gain", 0.18, 0.0, 0.80)
         self.end_spin_enabled = bool(rospy.get_param("~end_spin_enabled", True))
         self.end_spin_rotations = self.param_float("~end_spin_rotations", 2.0, 0.0, 5.0)
         self.end_spin_speed = self.param_float("~end_spin_speed", 0.45, 0.15, 0.80)
@@ -83,10 +85,9 @@ class FastAutoMapper:
         self.stop_reason = ""
         self.last_cmd_vx = 0.0
         self.last_cmd_wz = 0.0
-        self.turn_hold_until = 0.0
-        self.heading_hold_until = 0.0
         self.target_heading_deg = 0.0
         self.target_clearance = 0.0
+        self.target_gap_span_deg = 0.0
         rospy.on_shutdown(self.stop_motion)
 
     @staticmethod
@@ -155,6 +156,7 @@ class FastAutoMapper:
             "last_cmd_wz": round(self.last_cmd_wz, 3),
             "target_heading_deg": round(self.target_heading_deg, 1),
             "target_clearance": round(self.target_clearance, 2),
+            "target_gap_span_deg": round(self.target_gap_span_deg, 1),
         }
         payload.update(extra)
         self.status_pub.publish(String(data=json.dumps(payload, ensure_ascii=False)))
@@ -248,37 +250,62 @@ class FastAutoMapper:
         right = self.sector_mean(-45, 90) + 0.45 * self.sector_mean(-90, 60)
         return 1.0 if left >= right else -1.0
 
-    def choose_open_heading(self):
-        best_heading = 0.0
-        best_clearance = 0.0
-        best_score = -999.0
-        heading = -self.gap_heading_range
-        while heading <= self.gap_heading_range + 0.001:
-            near_clearance = self.sector_min(heading, self.gap_width, max_range=4.0)
-            mean_clearance = self.sector_mean(heading, self.gap_width * 1.35, max_range=4.0)
-            if near_clearance < self.stop_clearance:
-                heading += self.gap_heading_step
+    def scan_points(self, max_range):
+        if self.scan is None or self.scan.angle_increment == 0.0:
+            return []
+        points = []
+        limit = min(self.scan.range_max, max_range)
+        for idx, value in enumerate(self.scan.ranges):
+            angle = self.scan.angle_min + idx * self.scan.angle_increment
+            angle_deg = math.degrees(angle)
+            if abs(angle_deg) > self.free_path_angle_range:
                 continue
+            if math.isfinite(value):
+                if value < self.scan.range_min:
+                    distance = 0.0
+                else:
+                    distance = min(value, limit)
+            else:
+                distance = limit
+            points.append((angle_deg, distance))
+        return points
 
-            forward_score = 1.0 - min(abs(heading), self.gap_heading_range) / self.gap_heading_range
-            continuity = 1.0 - min(abs(heading - self.target_heading_deg), self.gap_heading_range) / self.gap_heading_range
-            score = (
-                1.35 * mean_clearance
-                + 0.75 * near_clearance
-                + self.forward_bias * forward_score
-                + 0.20 * continuity
-                - 0.004 * abs(heading)
-            )
-            if score > best_score:
-                best_score = score
-                best_heading = heading
-                best_clearance = min(mean_clearance, near_clearance)
-            heading += self.gap_heading_step
+    def choose_longest_free_path(self):
+        points = self.scan_points(self.free_path_max_range)
+        best = None
+        current = []
+        for point in points:
+            if point[1] >= self.free_path_clearance:
+                current.append(point)
+            elif current:
+                best = self.better_gap(best, current)
+                current = []
+        if current:
+            best = self.better_gap(best, current)
 
-        if best_score < -900.0:
-            best_heading = 45.0 * self.choose_turn_direction()
-            best_clearance = 0.0
-        return best_heading, best_clearance
+        if not best:
+            return 45.0 * self.choose_turn_direction(), 0.0, 0.0
+        first_angle = best[0][0]
+        last_angle = best[-1][0]
+        span = max(0.0, last_angle - first_angle)
+        center = (first_angle + last_angle) * 0.5
+        mean_clearance = sum(point[1] for point in best) / float(len(best))
+        return center, mean_clearance, span
+
+    def better_gap(self, best, candidate):
+        if not candidate:
+            return best
+        if best is None:
+            return candidate
+        cand_span = candidate[-1][0] - candidate[0][0]
+        best_span = best[-1][0] - best[0][0]
+        cand_mean = sum(point[1] for point in candidate) / float(len(candidate))
+        best_mean = sum(point[1] for point in best) / float(len(best))
+        cand_center = abs((candidate[0][0] + candidate[-1][0]) * 0.5)
+        best_center = abs((best[0][0] + best[-1][0]) * 0.5)
+        cand_score = 3.0 * cand_span + 14.0 * cand_mean - 0.20 * cand_center
+        best_score = 3.0 * best_span + 14.0 * best_mean - 0.20 * best_center
+        return candidate if cand_score > best_score else best
 
     @staticmethod
     def clamp(value, lower, upper):
@@ -392,18 +419,6 @@ class FastAutoMapper:
                 self.command(0.0, self.turn_direction * self.turn_speed * 0.85)
             return
 
-        if now >= self.heading_hold_until:
-            self.target_heading_deg, self.target_clearance = self.choose_open_heading()
-            self.heading_hold_until = now + self.heading_hold_sec
-
-        hard_blocked = front < self.min_front_clearance or front_wide <= self.stop_clearance * 1.25
-        if hard_blocked:
-            self.state = "turn"
-            self.turn_direction = 1.0 if self.target_heading_deg >= 0.0 else -1.0
-            self.state_until = now + 0.45
-            self.command(0.0, self.turn_direction * self.turn_speed * 0.80)
-            return
-
         if now - self.last_progress_time > self.stuck_timeout:
             self.state = "turn"
             self.turn_direction = self.choose_turn_direction()
@@ -412,45 +427,68 @@ class FastAutoMapper:
             self.command(0.0, self.turn_direction * self.turn_speed * 0.75)
             return
 
-        risk = 0.0
-        if front_predict < self.predict_front_clearance:
-            risk = max(risk, (self.predict_front_clearance - front_predict) / self.predict_front_clearance)
-        if front < self.slow_front_clearance:
-            risk = max(risk, (self.slow_front_clearance - front) / self.slow_front_clearance)
-        if self.target_clearance < self.slow_front_clearance:
-            risk = max(risk, (self.slow_front_clearance - self.target_clearance) / self.slow_front_clearance)
-        risk = self.clamp(risk, 0.0, 1.0)
-
-        if risk > 0.10 and now >= self.turn_hold_until:
-            self.turn_direction = 1.0 if self.target_heading_deg >= 0.0 else -1.0
-            self.turn_hold_until = now + 1.3
-
-        clearance_balance = (left_front - right_front) / max(left_front + right_front, 0.2)
-        side_balance = 0.0
-        if left_side < self.side_clearance:
-            side_balance -= (self.side_clearance - left_side) / self.side_clearance
-        if right_side < self.side_clearance:
-            side_balance += (self.side_clearance - right_side) / self.side_clearance
-        if left_side < self.corridor_side_clearance and right_side < self.corridor_side_clearance:
-            risk = max(risk, 0.65)
-        heading_steer = self.clamp(math.radians(self.target_heading_deg) * self.heading_gain, -1.0, 1.0)
-        steer = 0.72 * heading_steer + 0.18 * clearance_balance + 0.22 * side_balance
-        if risk > 0.10:
-            steer += self.turn_direction * (0.12 + 0.36 * risk)
-
-        speed_scale = 1.0 - 0.72 * risk
-        if abs(self.target_heading_deg) > 55.0:
-            speed_scale *= 0.55
-        elif abs(self.target_heading_deg) > 35.0:
-            speed_scale *= 0.75
-        if abs(steer) > 0.45:
-            speed_scale *= 0.78
-        vx = self.linear_speed * self.clamp(speed_scale, 0.24, 1.0)
-        wz = self.turn_speed * self.clamp(steer, -1.0, 1.0)
-        self.state = "gap_seek" if abs(self.target_heading_deg) > 12.0 else (
-            "curve_avoid" if risk > 0.10 or abs(steer) > 0.18 else "cruise"
+        front_blocked = (
+            front < self.min_front_clearance
+            or front_wide <= self.obstacle_trigger_clearance
+            or front_predict <= self.obstacle_trigger_clearance
         )
-        self.command(vx, wz)
+        if not front_blocked:
+            self.target_heading_deg = 0.0
+            self.target_clearance = front_predict
+            self.target_gap_span_deg = 0.0
+            clearance_balance = (left_front - right_front) / max(left_front + right_front, 0.2)
+            side_balance = 0.0
+            if left_side < self.side_clearance:
+                side_balance -= (self.side_clearance - left_side) / self.side_clearance
+            if right_side < self.side_clearance:
+                side_balance += (self.side_clearance - right_side) / self.side_clearance
+            steer = self.clamp(
+                self.cruise_centering_gain * clearance_balance + 0.16 * side_balance,
+                -0.35,
+                0.35,
+            )
+            speed_scale = 1.0
+            if front_predict < self.predict_front_clearance:
+                speed_scale = self.clamp(
+                    0.55 + 0.45 * front_predict / self.predict_front_clearance,
+                    0.45,
+                    1.0,
+                )
+            self.state = "cruise"
+            self.command(self.linear_speed * speed_scale, self.turn_speed * steer)
+            return
+
+        self.target_heading_deg, self.target_clearance, self.target_gap_span_deg = (
+            self.choose_longest_free_path()
+        )
+        if self.target_gap_span_deg < self.min_gap_span_deg:
+            self.state = "backup"
+            self.state_until = now + 0.7
+            self.turn_direction = self.choose_turn_direction()
+            self.command(-self.backup_speed, self.turn_direction * self.turn_speed * 0.45)
+            return
+
+        self.turn_direction = 1.0 if self.target_heading_deg >= 0.0 else -1.0
+        heading_abs = abs(self.target_heading_deg)
+        heading_steer = self.clamp(
+            math.radians(self.target_heading_deg) * self.heading_gain,
+            -1.0,
+            1.0,
+        )
+        if heading_abs > self.turn_in_place_heading:
+            self.state = "turn_to_longest_gap"
+            self.command(0.0, self.turn_speed * heading_steer)
+            return
+
+        speed_scale = self.clamp(
+            self.target_clearance / max(self.free_path_max_range, 0.1),
+            0.35,
+            0.75,
+        )
+        if heading_abs > self.turn_to_gap_tolerance:
+            speed_scale *= 0.55
+        self.state = "enter_longest_gap"
+        self.command(self.linear_speed * speed_scale, self.turn_speed * heading_steer)
 
     def run(self):
         self.start_time = time.time()

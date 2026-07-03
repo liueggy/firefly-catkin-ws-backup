@@ -7,18 +7,20 @@
   <arg name="slow_front_clearance" default="1.05" />
   <arg name="predict_front_clearance" default="1.45" />
   <arg name="side_clearance" default="0.36" />
-  <arg name="corridor_side_clearance" default="0.24" />
   <arg name="stop_clearance" default="0.30" />
   <arg name="stuck_timeout" default="2.5" />
   <arg name="scan_timeout" default="1.0" />
   <arg name="command_rate_limit" default="0.12" />
   <arg name="angular_rate_limit" default="0.18" />
-  <arg name="gap_heading_range" default="95.0" />
-  <arg name="gap_heading_step" default="10.0" />
-  <arg name="gap_width" default="34.0" />
-  <arg name="heading_gain" default="1.15" />
-  <arg name="heading_hold_sec" default="0.8" />
-  <arg name="forward_bias" default="0.18" />
+  <arg name="obstacle_trigger_clearance" default="0.78" />
+  <arg name="free_path_clearance" default="0.68" />
+  <arg name="free_path_max_range" default="3.5" />
+  <arg name="free_path_angle_range" default="125.0" />
+  <arg name="min_gap_span_deg" default="18.0" />
+  <arg name="turn_to_gap_tolerance" default="10.0" />
+  <arg name="turn_in_place_heading" default="28.0" />
+  <arg name="heading_gain" default="1.20" />
+  <arg name="cruise_centering_gain" default="0.18" />
   <arg name="end_spin_enabled" default="true" />
   <arg name="end_spin_rotations" default="2.0" />
   <arg name="end_spin_speed" default="0.45" />
@@ -45,18 +47,20 @@
     <param name="slow_front_clearance" value="$(arg slow_front_clearance)" />
     <param name="predict_front_clearance" value="$(arg predict_front_clearance)" />
     <param name="side_clearance" value="$(arg side_clearance)" />
-    <param name="corridor_side_clearance" value="$(arg corridor_side_clearance)" />
     <param name="stop_clearance" value="$(arg stop_clearance)" />
     <param name="stuck_timeout" value="$(arg stuck_timeout)" />
     <param name="scan_timeout" value="$(arg scan_timeout)" />
     <param name="command_rate_limit" value="$(arg command_rate_limit)" />
     <param name="angular_rate_limit" value="$(arg angular_rate_limit)" />
-    <param name="gap_heading_range" value="$(arg gap_heading_range)" />
-    <param name="gap_heading_step" value="$(arg gap_heading_step)" />
-    <param name="gap_width" value="$(arg gap_width)" />
+    <param name="obstacle_trigger_clearance" value="$(arg obstacle_trigger_clearance)" />
+    <param name="free_path_clearance" value="$(arg free_path_clearance)" />
+    <param name="free_path_max_range" value="$(arg free_path_max_range)" />
+    <param name="free_path_angle_range" value="$(arg free_path_angle_range)" />
+    <param name="min_gap_span_deg" value="$(arg min_gap_span_deg)" />
+    <param name="turn_to_gap_tolerance" value="$(arg turn_to_gap_tolerance)" />
+    <param name="turn_in_place_heading" value="$(arg turn_in_place_heading)" />
     <param name="heading_gain" value="$(arg heading_gain)" />
-    <param name="heading_hold_sec" value="$(arg heading_hold_sec)" />
-    <param name="forward_bias" value="$(arg forward_bias)" />
+    <param name="cruise_centering_gain" value="$(arg cruise_centering_gain)" />
     <param name="end_spin_enabled" value="$(arg end_spin_enabled)" />
     <param name="end_spin_rotations" value="$(arg end_spin_rotations)" />
     <param name="end_spin_speed" value="$(arg end_spin_speed)" />
