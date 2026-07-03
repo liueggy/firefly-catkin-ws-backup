@@ -35,16 +35,16 @@ class FastAutoMapper:
         )
         self.free_path_clearance = self.param_float("~free_path_clearance", 0.68, 0.30, 2.50)
         self.free_path_max_range = self.param_float("~free_path_max_range", 3.5, 1.0, 8.0)
-        self.free_path_angle_range = self.param_float("~free_path_angle_range", 125.0, 45.0, 170.0)
+        self.free_path_angle_range = self.param_float("~free_path_angle_range", 180.0, 45.0, 180.0)
         self.min_gap_span_deg = self.param_float("~min_gap_span_deg", 18.0, 5.0, 60.0)
         self.turn_to_gap_tolerance = self.param_float("~turn_to_gap_tolerance", 10.0, 3.0, 25.0)
         self.turn_in_place_heading = self.param_float("~turn_in_place_heading", 28.0, 10.0, 70.0)
         self.heading_gain = self.param_float("~heading_gain", 1.20, 0.30, 2.50)
         self.cruise_centering_gain = self.param_float("~cruise_centering_gain", 0.18, 0.0, 0.80)
         self.omni_enabled = bool(rospy.get_param("~omni_enabled", True))
-        self.omni_heading_limit = self.param_float("~omni_heading_limit", 125.0, 45.0, 170.0)
+        self.omni_heading_limit = self.param_float("~omni_heading_limit", 180.0, 45.0, 180.0)
         self.omni_min_speed_scale = self.param_float("~omni_min_speed_scale", 0.35, 0.10, 1.00)
-        self.omni_wz_gain = self.param_float("~omni_wz_gain", 0.10, 0.0, 0.80)
+        self.omni_wz_gain = self.param_float("~omni_wz_gain", 0.0, 0.0, 0.80)
         self.keep_heading_wz_limit = self.param_float("~keep_heading_wz_limit", 0.18, 0.0, 0.60)
         self.corridor_lock_sec = self.param_float("~corridor_lock_sec", 1.4, 0.2, 5.0)
         self.decision_lock_sec = self.param_float("~decision_lock_sec", 1.1, 0.2, 5.0)
@@ -225,10 +225,7 @@ class FastAutoMapper:
         angle_inc = self.scan.angle_increment
         if angle_inc == 0.0:
             return 0.0
-        center = math.radians(center_deg)
         half = math.radians(width_deg) * 0.5
-        low = center - half
-        high = center + half
         best = max_range
         found = False
         for idx, value in enumerate(self.scan.ranges):
@@ -237,7 +234,7 @@ class FastAutoMapper:
             if value < self.scan.range_min or value > min(self.scan.range_max, max_range):
                 continue
             angle = angle_min + idx * angle_inc
-            if low <= angle <= high:
+            if abs(self.shortest_angle_diff(math.degrees(angle), center_deg)) <= math.degrees(half):
                 best = min(best, value)
                 found = True
         return best if found else max_range
@@ -249,10 +246,7 @@ class FastAutoMapper:
         angle_inc = self.scan.angle_increment
         if angle_inc == 0.0:
             return 0.0
-        center = math.radians(center_deg)
         half = math.radians(width_deg) * 0.5
-        low = center - half
-        high = center + half
         values = []
         for idx, value in enumerate(self.scan.ranges):
             if not math.isfinite(value):
@@ -260,7 +254,7 @@ class FastAutoMapper:
             if value < self.scan.range_min or value > min(self.scan.range_max, max_range):
                 continue
             angle = angle_min + idx * angle_inc
-            if low <= angle <= high:
+            if abs(self.shortest_angle_diff(math.degrees(angle), center_deg)) <= math.degrees(half):
                 values.append(value)
         if not values:
             return max_range
@@ -280,7 +274,7 @@ class FastAutoMapper:
         limit = min(self.scan.range_max, max_range)
         for idx, value in enumerate(self.scan.ranges):
             angle = self.scan.angle_min + idx * self.scan.angle_increment
-            angle_deg = math.degrees(angle)
+            angle_deg = self.normalize_angle(math.degrees(angle))
             if abs(angle_deg) > self.free_path_angle_range:
                 continue
             if math.isfinite(value):
@@ -298,16 +292,30 @@ class FastAutoMapper:
 
     def choose_best_corridor(self, now):
         points = self.scan_points(self.free_path_max_range)
-        best = None
+        corridors = []
         current = []
         for point in points:
             if point[1] >= self.free_path_clearance:
                 current.append(point)
             elif current:
-                best = self.better_corridor(best, current, now)
+                corridors.append(current)
                 current = []
         if current:
-            best = self.better_corridor(best, current, now)
+            corridors.append(current)
+
+        # A rear-facing opening is split at -180/180 in LaserScan ordering.
+        if (
+            len(corridors) >= 2
+            and corridors[0][0] == points[0]
+            and corridors[-1][-1] == points[-1]
+        ):
+            wrapped_first = [(angle + 360.0, distance) for angle, distance in corridors[0]]
+            corridors[-1].extend(wrapped_first)
+            corridors = corridors[1:]
+
+        best = None
+        for corridor in corridors:
+            best = self.better_corridor(best, corridor, now)
 
         if not best:
             return 45.0 * self.choose_turn_direction(), 0.0, 0.0, 0.0
@@ -329,11 +337,14 @@ class FastAutoMapper:
         span = max(0.0, last_angle - first_angle)
         if span < self.min_gap_span_deg:
             return None
-        center = (first_angle + last_angle) * 0.5
+        center = self.normalize_angle((first_angle + last_angle) * 0.5)
         mean_clearance = sum(point[1] for point in candidate) / float(len(candidate))
         min_clearance = min(point[1] for point in candidate)
         center_penalty = abs(center) * 0.18
-        continuity_bonus = max(0.0, 18.0 - abs(center - self.target_heading_deg)) * 0.35
+        continuity_bonus = max(
+            0.0,
+            18.0 - abs(self.shortest_angle_diff(center, self.target_heading_deg)),
+        ) * 0.35
         growth_bonus = 0.0
         if self.known_cells >= self.heading_known_at_select + self.map_growth_reward_cells:
             growth_bonus = 12.0
@@ -367,6 +378,10 @@ class FastAutoMapper:
         diff = (a - b + 180.0) % 360.0 - 180.0
         return diff
 
+    @staticmethod
+    def normalize_angle(angle):
+        return (angle + 180.0) % 360.0 - 180.0
+
     def mark_heading_failed(self, heading, now):
         self.blacklisted_headings.append((heading, now + self.failed_heading_cooldown))
         self.blacklisted_headings = self.blacklisted_headings[-6:]
@@ -382,7 +397,7 @@ class FastAutoMapper:
         return max(target, current - max_step)
 
     def command(self, vx=0.0, wz=0.0, vy=0.0, smooth=True):
-        vx = self.clamp(vx, -self.backup_speed, self.linear_speed)
+        vx = self.clamp(vx, -self.linear_speed, self.linear_speed)
         vy = self.clamp(vy, -self.lateral_speed, self.lateral_speed)
         wz = self.clamp(wz, -self.turn_speed, self.turn_speed)
         if smooth:
@@ -471,13 +486,18 @@ class FastAutoMapper:
         left_side = self.sector_min(82, 52, max_range=3.0)
         right_side = self.sector_min(-82, 52, max_range=3.0)
 
-        if self.last_front is None or abs(front - self.last_front) > self.progress_front_delta:
+        motion_heading = (
+            self.target_heading_deg
+            if self.omni_enabled and now < self.corridor_lock_until
+            else 0.0
+        )
+        motion_clearance = self.sector_min(motion_heading, 34, max_range=4.0)
+        if (
+            self.last_front is None
+            or abs(motion_clearance - self.last_front) > self.progress_front_delta
+        ):
             self.last_progress_time = now
-            self.last_front = front
-
-        if front_wide <= self.stop_clearance:
-            self.enter_recovery(now, "too_close")
-            return
+            self.last_front = motion_clearance
 
         if now < self.state_until:
             if self.state == "backup":
@@ -497,13 +517,14 @@ class FastAutoMapper:
         )
 
         if now < self.corridor_lock_until:
-            if front_blocked:
+            corridor_clearance = self.sector_min(self.target_heading_deg, 34, max_range=4.0)
+            if corridor_clearance <= self.stop_clearance:
                 self.enter_recovery(now, "corridor_blocked")
                 return
             self.state = "omni_enter_corridor"
             vx, vy, wz = self.omni_vector_command(
                 self.target_heading_deg,
-                self.target_clearance,
+                min(self.target_clearance, corridor_clearance),
                 heading_weight=0.45,
                 speed_cap=0.82,
             )
@@ -541,7 +562,7 @@ class FastAutoMapper:
             return
 
         heading_abs = abs(self.target_heading_deg)
-        if self.omni_enabled and heading_abs <= self.omni_heading_limit:
+        if self.omni_enabled:
             self.corridor_lock_until = now + self.corridor_lock_sec
             vx, vy, wz = self.omni_vector_command(
                 self.target_heading_deg,
@@ -574,7 +595,7 @@ class FastAutoMapper:
         return self.clamp(math.radians(heading_deg) * self.heading_gain, -1.0, 1.0)
 
     def omni_vector_command(self, heading_deg, clearance, heading_weight=0.65, speed_cap=0.85):
-        heading_deg = self.clamp(heading_deg, -self.omni_heading_limit, self.omni_heading_limit)
+        heading_deg = self.normalize_angle(heading_deg)
         heading_rad = math.radians(heading_deg)
         clearance_scale = self.clamp(
             clearance / max(self.free_path_max_range, 0.1),

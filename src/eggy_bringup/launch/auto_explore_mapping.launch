@@ -16,16 +16,16 @@
   <arg name="obstacle_trigger_clearance" default="0.25" />
   <arg name="free_path_clearance" default="0.68" />
   <arg name="free_path_max_range" default="3.5" />
-  <arg name="free_path_angle_range" default="125.0" />
+  <arg name="free_path_angle_range" default="180.0" />
   <arg name="min_gap_span_deg" default="18.0" />
   <arg name="turn_to_gap_tolerance" default="10.0" />
   <arg name="turn_in_place_heading" default="28.0" />
   <arg name="heading_gain" default="1.20" />
   <arg name="cruise_centering_gain" default="0.18" />
   <arg name="omni_enabled" default="true" />
-  <arg name="omni_heading_limit" default="125.0" />
+  <arg name="omni_heading_limit" default="180.0" />
   <arg name="omni_min_speed_scale" default="0.35" />
-  <arg name="omni_wz_gain" default="0.10" />
+  <arg name="omni_wz_gain" default="0.0" />
   <arg name="keep_heading_wz_limit" default="0.18" />
   <arg name="corridor_lock_sec" default="1.4" />
   <arg name="decision_lock_sec" default="1.1" />
