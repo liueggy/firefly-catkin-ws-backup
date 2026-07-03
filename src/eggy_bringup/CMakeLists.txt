@@ -41,6 +41,8 @@ catkin_install_python(PROGRAMS
   scripts/kimi_inspection_bridge.py
   scripts/inspection_servo_route_runner.py
   scripts/meter_visual_servo.py
+  scripts/eggy_network_status.py
+  scripts/eggy_shell_bridge.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

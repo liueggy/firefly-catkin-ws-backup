@@ -25,6 +25,8 @@
   <arg name="meter_max_det" default="2" />
   <arg name="meter_frame_skip" default="1" />
   <arg name="use_command_center" default="true" />
+  <arg name="use_network_status" default="true" />
+  <arg name="use_shell_bridge" default="true" />
   <arg name="use_usart1" default="true" />
   <arg name="use_voice_controller" default="true" />
   <arg name="usart1_port" default="/dev/eggy_usart1" />
@@ -177,6 +179,19 @@
     <node pkg="eggy_bringup" type="eggy_command_center.py" name="eggy_command_center" output="screen">
       <param name="status_rate" value="0.2" />
       <param name="allow_shell" value="false" />
+    </node>
+  </group>
+
+  <group if="$(arg use_network_status)">
+    <node pkg="eggy_bringup" type="eggy_network_status.py" name="eggy_network_status" output="screen">
+      <param name="rate" value="0.5" />
+    </node>
+  </group>
+
+  <group if="$(arg use_shell_bridge)">
+    <node pkg="eggy_bringup" type="eggy_shell_bridge.py" name="eggy_shell_bridge" output="screen">
+      <param name="timeout" value="30.0" />
+      <param name="output_limit" value="262144" />
     </node>
   </group>
 
