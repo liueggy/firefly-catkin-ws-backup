@@ -33,6 +33,10 @@
   <exec_depend>cv_bridge</exec_depend>
   <exec_depend>eggy_base_driver</exec_depend>
   <exec_depend>eggy_robot_description</exec_depend>
+  <exec_depend>explore_lite</exec_depend>
+  <exec_depend>gmapping</exec_depend>
+  <exec_depend>move_base</exec_depend>
+  <exec_depend>teb_local_planner</exec_depend>
 
   <export />
 </package>
