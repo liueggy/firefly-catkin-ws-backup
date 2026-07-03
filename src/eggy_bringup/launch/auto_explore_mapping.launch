@@ -3,16 +3,16 @@
   <arg name="linear_speed" default="0.25" />
   <arg name="turn_speed" default="0.45" />
   <arg name="backup_speed" default="0.08" />
-  <arg name="min_front_clearance" default="0.20" />
+  <arg name="min_front_clearance" default="0.25" />
   <arg name="slow_front_clearance" default="1.05" />
   <arg name="predict_front_clearance" default="1.45" />
   <arg name="side_clearance" default="0.36" />
-  <arg name="stop_clearance" default="0.18" />
+  <arg name="stop_clearance" default="0.20" />
   <arg name="stuck_timeout" default="2.5" />
   <arg name="scan_timeout" default="1.0" />
   <arg name="command_rate_limit" default="0.12" />
   <arg name="angular_rate_limit" default="0.18" />
-  <arg name="obstacle_trigger_clearance" default="0.20" />
+  <arg name="obstacle_trigger_clearance" default="0.25" />
   <arg name="free_path_clearance" default="0.68" />
   <arg name="free_path_max_range" default="3.5" />
   <arg name="free_path_angle_range" default="125.0" />
@@ -21,6 +21,12 @@
   <arg name="turn_in_place_heading" default="28.0" />
   <arg name="heading_gain" default="1.20" />
   <arg name="cruise_centering_gain" default="0.18" />
+  <arg name="corridor_lock_sec" default="1.4" />
+  <arg name="decision_lock_sec" default="1.1" />
+  <arg name="failed_heading_cooldown" default="4.0" />
+  <arg name="failed_heading_width" default="28.0" />
+  <arg name="map_growth_reward_cells" default="18" />
+  <arg name="progress_front_delta" default="0.08" />
   <arg name="end_spin_enabled" default="true" />
   <arg name="end_spin_rotations" default="2.0" />
   <arg name="end_spin_speed" default="0.45" />
@@ -61,6 +67,12 @@
     <param name="turn_in_place_heading" value="$(arg turn_in_place_heading)" />
     <param name="heading_gain" value="$(arg heading_gain)" />
     <param name="cruise_centering_gain" value="$(arg cruise_centering_gain)" />
+    <param name="corridor_lock_sec" value="$(arg corridor_lock_sec)" />
+    <param name="decision_lock_sec" value="$(arg decision_lock_sec)" />
+    <param name="failed_heading_cooldown" value="$(arg failed_heading_cooldown)" />
+    <param name="failed_heading_width" value="$(arg failed_heading_width)" />
+    <param name="map_growth_reward_cells" value="$(arg map_growth_reward_cells)" />
+    <param name="progress_front_delta" value="$(arg progress_front_delta)" />
     <param name="end_spin_enabled" value="$(arg end_spin_enabled)" />
     <param name="end_spin_rotations" value="$(arg end_spin_rotations)" />
     <param name="end_spin_speed" value="$(arg end_spin_speed)" />
