@@ -210,7 +210,8 @@
           name="eggy_auto_relocalizer" output="screen" respawn="true"
           respawn_delay="3.0">
       <param name="dry_run" value="$(arg auto_relocalizer_dry_run)" />
-      <param name="angular_speed" value="0.28" />
+      <param name="angular_speed" value="0.5235987756" />
+      <param name="max_angular_speed" value="0.80" />
       <param name="timeout" value="35.0" />
       <param name="scan_timeout" value="1.0" />
       <param name="xy_variance_max" value="0.20" />

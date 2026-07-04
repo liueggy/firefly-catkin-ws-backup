@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import math
 import threading
 import time
 
@@ -23,6 +24,7 @@ class AutoRelocalizer:
         self.pose = None
         self.stable_samples = 0
         self.angular_speed = abs(float(rospy.get_param("~angular_speed", 0.28)))
+        self.max_angular_speed = abs(float(rospy.get_param("~max_angular_speed", 0.80)))
         self.timeout = float(rospy.get_param("~timeout", 35.0))
         self.scan_timeout = float(rospy.get_param("~scan_timeout", 1.0))
         self.xy_variance_max = float(rospy.get_param("~xy_variance_max", 0.20))
@@ -39,6 +41,13 @@ class AutoRelocalizer:
         rospy.Subscriber("/base/flag_stop", UInt8, self.flag_cb, queue_size=2)
         rospy.on_shutdown(self.stop_motion)
         self.publish("idle", "自动重定位节点已就绪", progress=0)
+
+    def requested_angular_speed(self, request):
+        if "angular_speed_deg" in request:
+            speed = math.radians(abs(float(request.get("angular_speed_deg"))))
+        else:
+            speed = abs(float(request.get("angular_speed", self.angular_speed)))
+        return min(self.max_angular_speed, max(0.12, speed))
 
     def publish(self, state, message, **extra):
         payload = {"state": state, "message": message, "stamp": rospy.Time.now().to_sec(), "dry_run": self.dry_run}
@@ -118,8 +127,10 @@ class AutoRelocalizer:
             self.publish("rejected", reason, progress=0)
             return
         timeout = min(90.0, max(10.0, float(request.get("timeout", self.timeout))))
-        speed = min(0.45, max(0.12, abs(float(request.get("angular_speed", self.angular_speed)))))
-        self.publish("preflight_ok", "安全检查通过", progress=5)
+        speed = self.requested_angular_speed(request)
+        self.publish("preflight_ok", "安全检查通过", progress=5,
+                     angular_speed=round(speed, 3),
+                     angular_speed_deg=round(math.degrees(speed), 2))
         if self.dry_run:
             self.publish("dry_run_complete", "Dry-run 完成：AMCL、雷达、急停和服务均正常", progress=100)
             return
