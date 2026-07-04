@@ -18,6 +18,23 @@ except Exception:
     pass
 
 
+def load_env_file(path):
+    if not path or not os.path.exists(path):
+        return
+    with open(path, "r", encoding="utf-8-sig") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+load_env_file(os.environ.get("KIMI_ENV_FILE", "/root/.config/kimi_inspection.env"))
+
 # 浠庣幆澧冨彉閲忚鍙?Kimi API Key锛岄伩鍏嶇‖缂栫爜瀵嗛挜
 KIMI_API_KEY = os.environ.get("KIMI_API_KEY")
 if not KIMI_API_KEY:

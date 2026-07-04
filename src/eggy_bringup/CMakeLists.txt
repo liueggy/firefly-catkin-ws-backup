@@ -39,6 +39,7 @@ install(TARGETS eggy_odom_fuser_node meter_rknn_detect_node
 catkin_install_python(PROGRAMS
   scripts/auto_map_explore.py
   scripts/kimi_inspection_bridge.py
+  scripts/kimi_inspection_server.py
   scripts/inspection_servo_route_runner.py
   scripts/meter_visual_servo.py
   scripts/eggy_nav_mode_status.py

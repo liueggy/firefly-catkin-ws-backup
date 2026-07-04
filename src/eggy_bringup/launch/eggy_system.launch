@@ -24,6 +24,7 @@
   <arg name="meter_nms" default="0.45" />
   <arg name="meter_max_det" default="2" />
   <arg name="meter_frame_skip" default="1" />
+  <arg name="use_kimi_server" default="true" />
   <arg name="use_kimi_bridge" default="true" />
   <arg name="kimi_api_base" default="http://127.0.0.1:8000" />
   <arg name="use_inspection_servo_route" default="true" />
@@ -172,6 +173,12 @@
       <param name="nms" value="$(arg meter_nms)" />
       <param name="max_det" value="$(arg meter_max_det)" />
       <param name="frame_skip" value="$(arg meter_frame_skip)" />
+    </node>
+  </group>
+
+  <group if="$(arg use_kimi_server)">
+    <node pkg="eggy_bringup" type="kimi_inspection_server.py" name="kimi_inspection_server" output="screen" respawn="true" respawn_delay="3.0">
+      <env name="KIMI_ENV_FILE" value="/root/.config/kimi_inspection.env" />
     </node>
   </group>
 
