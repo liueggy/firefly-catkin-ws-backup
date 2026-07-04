@@ -29,14 +29,11 @@
   <arg name="kimi_api_base" default="http://127.0.0.1:8000" />
   <arg name="use_inspection_servo_route" default="true" />
   <arg name="inspection_dry_run" default="false" />
-  <arg name="inspection_enable_kimi_after_servo" default="true" />
+  <arg name="inspection_enable_kimi_after_search" default="true" />
   <arg name="inspection_move_base_timeout" default="120" />
-  <arg name="inspection_servo_timeout" default="60" />
-  <arg name="inspection_servo_stable_sec" default="0.6" />
-  <arg name="inspection_servo_initial_search_timeout" default="25" />
-  <arg name="inspection_servo_min_score" default="0.65" />
-  <arg name="inspection_localization_confirm_timeout" default="6" />
-  <arg name="inspection_auto_relocalize_between_points" default="true" />
+  <arg name="inspection_search_timeout" default="24" />
+  <arg name="inspection_search_min_score" default="0.65" />
+  <arg name="inspection_search_angular_speed_deg" default="18" />
   <arg name="use_command_center" default="true" />
   <arg name="use_network_status" default="true" />
   <arg name="use_shell_bridge" default="true" />
@@ -191,25 +188,18 @@
     </node>
   </group>
 
-  <!-- Qt task-chain runner: /inspection_servo_route/request -> move_base goals -> visual servo at each waypoint. -->
+  <!-- Qt task-chain runner: /inspection_servo_route/request -> navigate -> search target -> Kimi. -->
   <group if="$(arg use_inspection_servo_route)">
     <node pkg="eggy_bringup" type="inspection_servo_route_runner.py" name="inspection_servo_route_runner" output="screen" respawn="true" respawn_delay="3.0">
       <param name="dry_run" value="$(arg inspection_dry_run)" />
       <param name="default_frame" value="map" />
       <param name="base_frame" value="base_link" />
       <param name="move_base_timeout" value="$(arg inspection_move_base_timeout)" />
-      <param name="servo_timeout" value="$(arg inspection_servo_timeout)" />
-      <param name="servo_stable_sec" value="$(arg inspection_servo_stable_sec)" />
-      <param name="servo_initial_search_timeout" value="$(arg inspection_servo_initial_search_timeout)" />
-      <param name="servo_min_score" value="$(arg inspection_servo_min_score)" />
-      <param name="enable_kimi_after_servo" value="$(arg inspection_enable_kimi_after_servo)" />
-      <param name="intercept_during_navigation" value="true" />
-      <param name="intercept_min_score" value="0.75" />
-      <param name="intercept_stable_frames" value="4" />
-      <param name="verify_localization_between_points" value="true" />
-      <param name="localization_confirm_timeout" value="$(arg inspection_localization_confirm_timeout)" />
-      <param name="auto_relocalize_between_points" value="$(arg inspection_auto_relocalize_between_points)" />
-      <param name="auto_relocalize_angular_speed_deg" value="30.0" />
+      <param name="enable_kimi_after_search" value="$(arg inspection_enable_kimi_after_search)" />
+      <param name="search_timeout" value="$(arg inspection_search_timeout)" />
+      <param name="search_min_score" value="$(arg inspection_search_min_score)" />
+      <param name="search_angular_speed_deg" value="$(arg inspection_search_angular_speed_deg)" />
+      <param name="search_max_rotation_deg" value="360.0" />
     </node>
   </group>
 

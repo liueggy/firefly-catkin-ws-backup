@@ -1,27 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Route runner that calls meter_visual_servo.py at each waypoint.
+"""Route runner that navigates to each waypoint, searches target, then calls Kimi.
 
-This node is intentionally narrow: it does not change move_base, Qt's existing
-single-goal bridge, or meter_visual_servo.py. It only sequences them.
+This node is intentionally narrow: it does not change move_base or Qt's
+existing single-goal bridge. It only sequences navigation, target search, and
+Kimi analysis.
 """
 
 import json
 import math
-import os
-import signal
-import subprocess
 import threading
 import time
 import uuid
 
 import actionlib
 import rospy
-import tf
 from actionlib_msgs.msg import GoalStatus
-from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Quaternion, Twist
+from geometry_msgs.msg import PoseStamped, Quaternion, Twist
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from std_msgs.msg import String
+import tf
 
 
 GOAL_STATUS_TEXT = {
@@ -53,96 +51,42 @@ class InspectionServoRouteRunner:
         self.route_file = rospy.get_param("~route_file", "")
         self.move_base_timeout = float(rospy.get_param("~move_base_timeout", 120.0))
         self.current_pose_timeout = float(rospy.get_param("~current_pose_timeout", 3.0))
-        self.servo_timeout = float(rospy.get_param("~servo_timeout", 60.0))
-        self.servo_stable_sec = float(rospy.get_param("~servo_stable_sec", 0.6))
-        self.servo_startup_wait = float(rospy.get_param("~servo_startup_wait", 0.35))
-        self.servo_shutdown_timeout = float(rospy.get_param("~servo_shutdown_timeout", 3.0))
-        self.enable_kimi_after_servo = bool(rospy.get_param("~enable_kimi_after_servo", True))
+        self.enable_kimi_after_search = bool(rospy.get_param("~enable_kimi_after_search", True))
         self.kimi_timeout = float(rospy.get_param("~kimi_timeout", 90.0))
         self.kimi_task = rospy.get_param("~kimi_task", "meter")
         self.stop_on_nav_fail = bool(rospy.get_param("~stop_on_nav_fail", True))
-        self.stop_on_servo_fail = bool(rospy.get_param("~stop_on_servo_fail", True))
         self.stop_on_kimi_fail = bool(rospy.get_param("~stop_on_kimi_fail", False))
-        self.intercept_during_navigation = bool(
-            rospy.get_param("~intercept_during_navigation", True)
-        )
-        self.intercept_min_score = float(rospy.get_param("~intercept_min_score", 0.75))
-        self.intercept_stable_frames = int(rospy.get_param("~intercept_stable_frames", 4))
-        self.intercept_max_age = float(rospy.get_param("~intercept_max_age", 0.7))
-        self.intercept_cooldown = float(rospy.get_param("~intercept_cooldown", 4.0))
-        self.servo_min_score = float(rospy.get_param("~servo_min_score", 0.65))
-        self.servo_initial_search_timeout = float(
-            rospy.get_param("~servo_initial_search_timeout", 25.0)
-        )
-        self.verify_localization_between_points = bool(
-            rospy.get_param("~verify_localization_between_points", True)
-        )
-        self.localization_confirm_timeout = float(
-            rospy.get_param("~localization_confirm_timeout", 6.0)
-        )
-        self.localization_xy_variance_max = float(
-            rospy.get_param("~localization_xy_variance_max", 0.20)
-        )
-        self.localization_yaw_variance_max = float(
-            rospy.get_param("~localization_yaw_variance_max", 0.12)
-        )
-        self.localization_stable_samples = int(
-            rospy.get_param("~localization_stable_samples", 3)
-        )
-        self.auto_relocalize_between_points = bool(
-            rospy.get_param("~auto_relocalize_between_points", True)
-        )
-        self.auto_relocalize_timeout = float(rospy.get_param("~auto_relocalize_timeout", 45.0))
-        self.auto_relocalize_angular_speed_deg = float(
-            rospy.get_param("~auto_relocalize_angular_speed_deg", 30.0)
-        )
+        self.search_min_score = float(rospy.get_param("~search_min_score", 0.65))
+        self.search_stable_frames = int(rospy.get_param("~search_stable_frames", 3))
+        self.search_max_age = float(rospy.get_param("~search_max_age", 0.8))
+        self.search_timeout = float(rospy.get_param("~search_timeout", 24.0))
+        self.search_angular_speed_deg = float(rospy.get_param("~search_angular_speed_deg", 18.0))
+        self.search_max_rotation_deg = float(rospy.get_param("~search_max_rotation_deg", 360.0))
         self.dry_run = bool(rospy.get_param("~dry_run", False))
 
         self.lock = threading.Lock()
         self.busy = False
         self.cancel_requested = False
-        self.latest_servo_status = {}
         self.kimi_results = {}
-        self.servo_proc = None
         self.navigation_active = False
         self.expected_class = "any"
         self.detection_candidate = None
         self.detection_stable_count = 0
         self.last_detection_class = ""
-        self.last_intercept_time = 0.0
-        self.latest_amcl_quality = None
-        self.latest_relocalization_status = {}
 
         self.status_pub = rospy.Publisher("/inspection_servo_route/status", String, queue_size=10, latch=True)
         self.result_pub = rospy.Publisher("/inspection_servo_route/result", String, queue_size=10, latch=True)
         self.cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
-        self.servo_request_pub = rospy.Publisher("/meter_visual_servo/request", String, queue_size=5)
         self.kimi_request_pub = rospy.Publisher("/kimi_inspection/request", String, queue_size=5)
-        self.relocalization_request_pub = rospy.Publisher(
-            "/eggy/relocalization/request", String, queue_size=5
-        )
 
         rospy.Subscriber("/inspection_servo_route/request", String, self.on_request, queue_size=5)
-        rospy.Subscriber("/meter_visual_servo/status", String, self.on_servo_status, queue_size=20)
         rospy.Subscriber("/kimi_inspection/result", String, self.on_kimi_result, queue_size=10)
         rospy.Subscriber("/meter/detection", String, self.on_detection, queue_size=10)
-        rospy.Subscriber("/amcl_pose", PoseWithCovarianceStamped, self.on_amcl_pose, queue_size=10)
-        rospy.Subscriber(
-            "/eggy/relocalization/status", String, self.on_relocalization_status, queue_size=10
-        )
 
         self.tf_listener = tf.TransformListener()
         self.client = actionlib.SimpleActionClient("/move_base", MoveBaseAction)
         self.publish_status("ready", "inspection servo route runner ready", {})
         rospy.loginfo("inspection_servo_route_runner ready dry_run=%s", self.dry_run)
-
-    def on_servo_status(self, msg):
-        try:
-            data = json.loads(msg.data)
-        except Exception:
-            return
-        with self.lock:
-            self.latest_servo_status = data
 
     def on_kimi_result(self, msg):
         try:
@@ -153,24 +97,6 @@ class InspectionServoRouteRunner:
         if request_id:
             with self.lock:
                 self.kimi_results[str(request_id)] = data
-
-    def on_amcl_pose(self, msg):
-        cov = msg.pose.covariance
-        quality = {
-            "stamp": time.time(),
-            "xy_variance": max(float(cov[0]), float(cov[7])),
-            "yaw_variance": float(cov[35]),
-        }
-        with self.lock:
-            self.latest_amcl_quality = quality
-
-    def on_relocalization_status(self, msg):
-        try:
-            data = json.loads(msg.data)
-        except Exception:
-            return
-        with self.lock:
-            self.latest_relocalization_status = data
 
     def on_detection(self, msg):
         try:
@@ -192,7 +118,7 @@ class InspectionServoRouteRunner:
                 continue
             if expected not in ("", "any", class_name):
                 continue
-            if score < self.intercept_min_score:
+            if score < self.search_min_score:
                 continue
             valid.append(detection)
 
@@ -227,7 +153,6 @@ class InspectionServoRouteRunner:
         if command in ("stop", "cancel"):
             self.cancel_requested = True
             self.client.cancel_all_goals()
-            self.stop_servo_node()
             self.stop_robot()
             self.publish_status("cancelled", "route cancel requested", {})
             return
@@ -350,10 +275,9 @@ class InspectionServoRouteRunner:
                 point = {
                     "waypoint": wp,
                     "navigation": nav,
-                    "servo": None,
+                    "search": None,
                     "target": nav.get("detection"),
                     "kimi": None,
-                    "localization": None,
                 }
                 if not nav.get("ok"):
                     results.append(point)
@@ -361,28 +285,30 @@ class InspectionServoRouteRunner:
                         raise RuntimeError("navigation failed at %s: %s" % (wp["id"], nav.get("state_text")))
                     continue
                 self.stop_robot()
-                self.publish_status("servo_starting", "starting visual servo at %s" % wp["id"], {
+                self.publish_status("searching_target", "searching target at %s" % wp["id"], {
                     "index": index,
                     "waypoint": wp,
-                    "intercepted": bool(nav.get("intercepted")),
                     "detection": nav.get("detection"),
                 })
-                servo = self.run_visual_servo(wp)
-                point["servo"] = servo
-                if servo.get("status"):
-                    point["target"] = servo["status"]
-                self.stop_servo_node()
+                search = self.search_target_at_waypoint(wp)
+                point["search"] = search
+                if search.get("target"):
+                    point["target"] = search["target"]
                 self.stop_robot()
-                if not servo.get("ok") and self.stop_on_servo_fail:
-                    results.append(point)
-                    raise RuntimeError("visual servo failed at %s: %s" % (wp["id"], servo.get("state")))
-                self.publish_status("target_confirmed", "reliable target confirmed at %s" % wp["id"], {
-                    "index": index,
-                    "waypoint": wp,
-                    "target": point.get("target"),
-                    "servo": servo,
-                })
-                if self.enable_kimi_after_servo:
+                if search.get("ok"):
+                    self.publish_status("target_confirmed", "reliable target confirmed at %s" % wp["id"], {
+                        "index": index,
+                        "waypoint": wp,
+                        "target": point.get("target"),
+                        "search": search,
+                    })
+                else:
+                    self.publish_status("target_skipped", "no reliable target found at %s; skipping Kimi" % wp["id"], {
+                        "index": index,
+                        "waypoint": wp,
+                        "search": search,
+                    })
+                if search.get("ok") and self.enable_kimi_after_search:
                     self.publish_status("kimi_running", "running kimi inspection at %s" % wp["id"], {
                         "index": index,
                         "waypoint": wp,
@@ -398,11 +324,6 @@ class InspectionServoRouteRunner:
                     if not kimi.get("ok") and self.stop_on_kimi_fail:
                         results.append(point)
                         raise RuntimeError("kimi inspection failed at %s: %s" % (wp["id"], kimi.get("error") or kimi.get("state")))
-                localization = self.ensure_localization_before_next(wp, index)
-                point["localization"] = localization
-                if not localization.get("ok"):
-                    results.append(point)
-                    raise RuntimeError("localization check failed after %s: %s" % (wp["id"], localization.get("message")))
                 results.append(point)
             if not self.cancel_requested:
                 self.publish_status("returning_home", "returning to start pose", {"home": home})
@@ -416,7 +337,6 @@ class InspectionServoRouteRunner:
             message = str(exc)
             self.publish_status("error", message, {"completed_points": len(results)})
         finally:
-            self.stop_servo_node()
             self.stop_robot()
             result = {
                 "ok": ok,
@@ -465,34 +385,6 @@ class InspectionServoRouteRunner:
                         "ok": state == GoalStatus.SUCCEEDED,
                         "state": int(state),
                         "state_text": GOAL_STATUS_TEXT.get(state, str(state)),
-                        "intercepted": False,
-                    }
-                candidate = None
-                with self.lock:
-                    if self.detection_candidate is not None:
-                        candidate = dict(self.detection_candidate)
-                fresh = candidate and time.time() - candidate["stamp"] <= self.intercept_max_age
-                cooled_down = time.time() - self.last_intercept_time >= self.intercept_cooldown
-                stable = candidate and candidate["stable_frames"] >= self.intercept_stable_frames
-                allow_intercept = bool(
-                    wp.get("allow_vision_intercept", wp.get("id") != "home")
-                )
-                if allow_intercept and self.intercept_during_navigation and fresh and cooled_down and stable:
-                    self.publish_status(
-                        "target_intercept",
-                        "stable meter target detected; pausing navigation",
-                        {"waypoint": wp, "detection": candidate},
-                    )
-                    self.client.cancel_goal()
-                    self.client.wait_for_result(rospy.Duration(1.5))
-                    self.stop_robot()
-                    self.last_intercept_time = time.time()
-                    return {
-                        "ok": True,
-                        "state": GoalStatus.PREEMPTED,
-                        "state_text": "VISION_INTERCEPT",
-                        "intercepted": True,
-                        "detection": candidate,
                     }
             self.client.cancel_goal()
             return {"ok": False, "state": -1, "state_text": "TIMEOUT"}
@@ -500,35 +392,62 @@ class InspectionServoRouteRunner:
             with self.lock:
                 self.navigation_active = False
 
-    def run_visual_servo(self, wp):
+    def current_detection_candidate(self):
+        with self.lock:
+            candidate = dict(self.detection_candidate) if self.detection_candidate else None
+        if not candidate:
+            return None
+        if time.time() - candidate.get("stamp", 0.0) > self.search_max_age:
+            return None
+        if candidate.get("stable_frames", 0) < self.search_stable_frames:
+            return None
+        return candidate
+
+    def search_target_at_waypoint(self, wp):
         if self.dry_run:
-            rospy.sleep(0.5)
-            return {"ok": True, "state": "DRY_RUN", "status": {}}
-        self.start_servo_node()
-        deadline = time.time() + float(wp.get("servo_timeout", self.servo_timeout))
-        hold_started = None
-        last_status = {}
-        good_states = set(["target_size_reached", "target_size_hold"])
+            rospy.sleep(0.3)
+            return {"ok": True, "state": "DRY_RUN", "target": {"class_name": "any"}}
+        deadline = time.time() + float(wp.get("search_timeout", self.search_timeout))
+        angular_speed_deg = abs(float(wp.get("search_angular_speed_deg", self.search_angular_speed_deg)))
+        angular_speed = math.radians(max(1.0, angular_speed_deg))
+        max_rotation_deg = abs(float(wp.get("search_max_rotation_deg", self.search_max_rotation_deg)))
+        rotated_rad = 0.0
+        prev_time = time.time()
         while not rospy.is_shutdown() and time.time() < deadline:
             if self.cancel_requested:
-                return {"ok": False, "state": "cancelled", "status": last_status}
-            with self.lock:
-                last_status = dict(self.latest_servo_status)
-            state = str(last_status.get("state", ""))
-            if state in good_states:
-                if hold_started is None:
-                    hold_started = time.time()
-                if time.time() - hold_started >= float(wp.get("servo_stable_sec", self.servo_stable_sec)):
-                    return {
-                        "ok": True,
-                        "state": state,
-                        "stable_sec": round(time.time() - hold_started, 3),
-                        "status": last_status,
-                    }
-            else:
-                hold_started = None
+                return {"ok": False, "state": "cancelled", "message": "cancelled"}
+            candidate = self.current_detection_candidate()
+            if candidate:
+                self.stop_robot()
+                return {
+                    "ok": True,
+                    "state": "target_found",
+                    "target": candidate,
+                    "rotated_deg": round(math.degrees(rotated_rad), 2),
+                }
+            now = time.time()
+            dt = max(0.0, now - prev_time)
+            prev_time = now
+            rotated_rad += angular_speed * dt
+            if rotated_rad >= math.radians(max_rotation_deg):
+                self.stop_robot()
+                return {
+                    "ok": False,
+                    "state": "target_not_found",
+                    "message": "no reliable target within one rotation",
+                    "rotated_deg": round(math.degrees(rotated_rad), 2),
+                }
+            cmd = Twist()
+            cmd.angular.z = angular_speed
+            self.cmd_pub.publish(cmd)
             rospy.sleep(0.1)
-        return {"ok": False, "state": "servo_timeout", "status": last_status}
+        self.stop_robot()
+        return {
+            "ok": False,
+            "state": "search_timeout",
+            "message": "target search timed out",
+            "rotated_deg": round(math.degrees(rotated_rad), 2),
+        }
 
     def run_kimi_inspection(self, wp):
         if self.dry_run:
@@ -554,152 +473,6 @@ class InspectionServoRouteRunner:
                 return data
             rospy.sleep(0.1)
         return {"ok": False, "state": "kimi_timeout", "request_id": request_id, "task": payload["task"]}
-
-    def current_localization_quality(self):
-        with self.lock:
-            quality = dict(self.latest_amcl_quality) if self.latest_amcl_quality else None
-        if not quality:
-            return None
-        quality["age"] = round(time.time() - quality.get("stamp", 0.0), 3)
-        quality["ok"] = (
-            quality["age"] <= 1.0
-            and quality["xy_variance"] <= self.localization_xy_variance_max
-            and quality["yaw_variance"] <= self.localization_yaw_variance_max
-        )
-        return quality
-
-    def wait_for_localization_stable(self, timeout_sec):
-        if self.dry_run:
-            return {"ok": True, "state": "DRY_RUN"}
-        deadline = time.time() + max(0.1, timeout_sec)
-        stable = 0
-        last_quality = None
-        while not rospy.is_shutdown() and time.time() < deadline:
-            if self.cancel_requested:
-                return {"ok": False, "state": "cancelled", "message": "cancelled"}
-            quality = self.current_localization_quality()
-            if quality:
-                last_quality = quality
-                stable = stable + 1 if quality.get("ok") else 0
-                if stable >= self.localization_stable_samples:
-                    quality["stable_samples"] = stable
-                    return {"ok": True, "state": "stable", "quality": quality}
-            rospy.sleep(0.2)
-        return {
-            "ok": False,
-            "state": "unstable",
-            "message": "AMCL pose covariance is not stable",
-            "quality": last_quality,
-        }
-
-    def request_auto_relocalization(self, wp):
-        request = {
-            "command": "start",
-            "timeout": self.auto_relocalize_timeout,
-            "angular_speed_deg": self.auto_relocalize_angular_speed_deg,
-            "reason": "inspection_between_waypoints",
-            "waypoint_id": wp.get("id"),
-        }
-        start_time = time.time()
-        with self.lock:
-            self.latest_relocalization_status = {}
-        self.relocalization_request_pub.publish(String(json.dumps(request, ensure_ascii=False)))
-        deadline = time.time() + self.auto_relocalize_timeout + 5.0
-        last_status = {}
-        while not rospy.is_shutdown() and time.time() < deadline:
-            if self.cancel_requested:
-                return {"ok": False, "state": "cancelled", "message": "cancelled"}
-            with self.lock:
-                last_status = dict(self.latest_relocalization_status)
-            if float(last_status.get("stamp", 0.0)) >= start_time - 0.5:
-                state = str(last_status.get("state", ""))
-                if state in ("success", "dry_run_complete"):
-                    return {"ok": True, "state": state, "status": last_status}
-                if state in ("failed", "rejected", "cancelled"):
-                    return {
-                        "ok": False,
-                        "state": state,
-                        "message": last_status.get("message", state),
-                        "status": last_status,
-                    }
-            rospy.sleep(0.2)
-        return {
-            "ok": False,
-            "state": "timeout",
-            "message": "auto relocalization timed out",
-            "status": last_status,
-        }
-
-    def ensure_localization_before_next(self, wp, index):
-        if not self.verify_localization_between_points:
-            return {"ok": True, "state": "skipped", "message": "disabled"}
-        self.publish_status("localization_checking", "checking AMCL localization after %s" % wp["id"], {
-            "index": index,
-            "waypoint": wp,
-        })
-        stable = self.wait_for_localization_stable(self.localization_confirm_timeout)
-        if stable.get("ok"):
-            self.publish_status("localization_stable", "AMCL localization is stable", {
-                "index": index,
-                "waypoint": wp,
-                "localization": stable,
-            })
-            return stable
-        if not self.auto_relocalize_between_points:
-            return stable
-        self.publish_status("relocalizing", "AMCL unstable; requesting automatic relocalization", {
-            "index": index,
-            "waypoint": wp,
-            "localization": stable,
-        })
-        relocalized = self.request_auto_relocalization(wp)
-        if not relocalized.get("ok"):
-            return relocalized
-        confirmed = self.wait_for_localization_stable(self.localization_confirm_timeout)
-        confirmed["relocalization"] = relocalized
-        return confirmed
-
-    def start_servo_node(self):
-        self.stop_servo_node()
-        with self.lock:
-            self.latest_servo_status = {}
-        initial_search_timeout = self.servo_initial_search_timeout
-        env = os.environ.copy()
-        self.servo_proc = subprocess.Popen(
-            [
-                "rosrun",
-                "eggy_bringup",
-                "meter_visual_servo.py",
-                "_target_class:=%s" % self.expected_class,
-                "_min_score:=%.3f" % self.servo_min_score,
-                "_initial_search_timeout:=%.3f" % initial_search_timeout,
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            preexec_fn=os.setsid,
-            env=env,
-        )
-        rospy.sleep(self.servo_startup_wait)
-        self.servo_request_pub.publish(String(json.dumps({
-            "command": "start",
-            "target_class": self.expected_class,
-        })))
-
-    def stop_servo_node(self):
-        self.servo_request_pub.publish(String("stop"))
-        if self.servo_proc is not None:
-            proc = self.servo_proc
-            self.servo_proc = None
-            try:
-                if proc.poll() is None:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGINT)
-                    deadline = time.time() + self.servo_shutdown_timeout
-                    while proc.poll() is None and time.time() < deadline:
-                        time.sleep(0.05)
-                if proc.poll() is None:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            except Exception as exc:
-                rospy.logwarn("failed to stop meter_visual_servo process: %s", exc)
 
     def stop_robot(self):
         z = Twist()
