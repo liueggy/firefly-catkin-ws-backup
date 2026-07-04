@@ -41,6 +41,6 @@ global_costmap:
   inflation_layer:
     # Keep some exact free-space cells for explore_lite frontier seeds.
     # Near-field collision safety remains on the local costmap.
-    inflation_radius: 0.25
-    cost_scaling_factor: 8.0
+    inflation_radius: 0.18
+    cost_scaling_factor: 10.0
     inflate_unknown: false

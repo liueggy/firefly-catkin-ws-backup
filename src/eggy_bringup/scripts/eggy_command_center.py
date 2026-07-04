@@ -14,6 +14,7 @@ import subprocess
 import time
 import base64
 import re
+import shlex
 import yaml
 
 import rospy
@@ -275,17 +276,50 @@ class EggyCommandCenter:
         return False
 
     def _kill_by_names(self, names, timeout_sec=3.0):
-        cmd = 'pids='
-        for n in names:
-            cmd += '$(pgrep -x ' + n + ') '
-        cmd += '; [ -n "$pids" ] && kill -TERM $pids >/dev/null 2>&1 || true'
-        run_cmd(cmd, timeout=2)
+        """Kill ROS node executables by full process path pattern.
+
+        The previous shell assignment tried to accumulate multiple pgrep
+        results in one command, but the generated command was not reliable.
+        During AMCL switching it let the boot-time slam_gmapping process
+        survive, leaving both gmapping and map_server publishing /map.
+        """
+        patterns = {
+            'slam_gmapping': r'/opt/ros/noetic/lib/gmapping/slam_gmapping',
+            'map_server': r'/opt/ros/noetic/lib/map_server/map_server',
+            'amcl': r'/opt/ros/noetic/lib/amcl/amcl',
+            'move_base': r'/opt/ros/noetic/lib/move_base/move_base',
+        }
+        selected = [patterns.get(name, name) for name in names]
+
+        for pattern in selected:
+            run_cmd("pkill -TERM -f '" + pattern + "' 2>/dev/null || true", timeout=2)
         time.sleep(min(timeout_sec, 2.0))
-        cmd = 'pids='
-        for n in names:
-            cmd += '$(pgrep -x ' + n + ') '
-        cmd += '; [ -n "$pids" ] && kill -KILL $pids >/dev/null 2>&1 || true'
-        run_cmd(cmd, timeout=2)
+        for pattern in selected:
+            run_cmd("pkill -KILL -f '" + pattern + "' 2>/dev/null || true", timeout=2)
+
+    def _cleanup_ros_master(self):
+        """Remove stale node registrations left in ROS master after process kills."""
+        run_cmd("yes y | rosnode cleanup >/tmp/eggy_rosnode_cleanup.log 2>&1 || true", timeout=8)
+
+    def _launch_detached(self, command, log_path):
+        """Launch a ROS command outside run_cmd's timeout-managed process group."""
+        env = os.environ.copy()
+        env.setdefault('ROS_MASTER_URI', 'http://localhost:11311')
+        wrapped = (
+            "source /opt/ros/noetic/setup.bash; "
+            "source /root/catkin_ws/devel/setup.bash 2>/dev/null || true; "
+            "exec " + command
+        )
+        log = open(log_path, 'ab', buffering=0)
+        subprocess.Popen(
+            ['bash', '-lc', wrapped],
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            env=env,
+            preexec_fn=os.setsid,
+            close_fds=True,
+        )
 
     def switch_mode_fast(self, mode, map_file=None):
         if mode not in ('mapping', 'navigation'):
@@ -308,17 +342,30 @@ class EggyCommandCenter:
         for pat in stop_patterns:
             run_cmd("pkill -KILL -f '" + pat + "' 2>/dev/null || true", timeout=2)
         self._kill_by_names(exact_names, timeout_sec=0.5)
+        self._cleanup_ros_master()
 
         if mode == 'mapping':
-            run_cmd('nohup roslaunch eggy_bringup mapping_light.launch scan_topic:=/scan base_frame:=base_link odom_frame:=odom >/tmp/eggy_mode_switch_mapping.log 2>&1 &', timeout=3)
-            run_cmd('nohup roslaunch eggy_bringup move_base_only.launch >/tmp/eggy_mode_switch_movebase.log 2>&1 &', timeout=3)
+            self._launch_detached(
+                'roslaunch eggy_bringup mapping_light.launch scan_topic:=/scan base_frame:=base_link odom_frame:=odom',
+                '/tmp/eggy_mode_switch_mapping.log')
+            self._launch_detached(
+                'roslaunch eggy_bringup move_base_only.launch',
+                '/tmp/eggy_mode_switch_movebase.log')
         else:
-            run_cmd('nohup rosrun map_server map_server ' + map_file + ' >/tmp/eggy_mode_switch_mapserver.log 2>&1 &', timeout=3)
-            run_cmd('nohup roslaunch eggy_bringup amcl.launch scan_topic:=/scan odom_frame_id:=odom base_frame_id:=base_link map:=/map >/tmp/eggy_mode_switch_amcl.log 2>&1 &', timeout=3)
+            quoted_map = shlex.quote(map_file)
+            self._launch_detached(
+                'rosrun map_server map_server ' + quoted_map,
+                '/tmp/eggy_mode_switch_mapserver.log')
+            self._launch_detached(
+                'roslaunch eggy_bringup amcl.launch scan_topic:=/scan odom_frame_id:=odom base_frame_id:=base_link map:=/map',
+                '/tmp/eggy_mode_switch_amcl.log')
             time.sleep(1.0)
-            run_cmd('nohup roslaunch eggy_bringup move_base_nav.launch >/tmp/eggy_mode_switch_movebase.log 2>&1 &', timeout=3)
+            self._launch_detached(
+                'roslaunch eggy_bringup move_base_nav.launch',
+                '/tmp/eggy_mode_switch_movebase.log')
 
         time.sleep(4.0)
+        self._cleanup_ros_master()
         status = self.build_status()
         expected = 'static_nav' if mode == 'navigation' else 'mapping_slam'
         if mode == 'mapping' and status.get('mode') == 'unknown':

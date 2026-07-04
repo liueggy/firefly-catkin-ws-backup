@@ -48,8 +48,10 @@ TebLocalPlannerROS:
   free_goal_vel: true
 
   # --- 障碍物 ---
-  min_obstacle_dist: 0.18
-  inflation_dist: 0.32
+  # Narrow-passage profile. Keep this above zero so the planner still respects
+  # laser obstacles, but avoid treating valid tight corridors as impossible.
+  min_obstacle_dist: 0.12
+  inflation_dist: 0.22
   include_costmap_obstacles: true
   costmap_obstacles_behind_robot_dist: 1.2
   obstacle_poses_affected: 30

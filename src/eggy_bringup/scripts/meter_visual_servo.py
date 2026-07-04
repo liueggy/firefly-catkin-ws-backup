@@ -46,6 +46,8 @@ class MeterVisualServo:
         self.center_deadband = float(rospy.get_param("~center_deadband", 0.06))
         self.search_wz = float(rospy.get_param("~search_wz", 0.45))
         self.search_timeout = float(rospy.get_param("~search_timeout", 1.2))
+        self.initial_search_wz = float(rospy.get_param("~initial_search_wz", 0.35))
+        self.initial_search_timeout = float(rospy.get_param("~initial_search_timeout", 12.0))
         self.cmd_rate = float(rospy.get_param("~cmd_rate", 25.0))
         self.detection_timeout = float(rospy.get_param("~detection_timeout", 0.55))
         self.scan_timeout = float(rospy.get_param("~scan_timeout", 1.0))
@@ -67,6 +69,7 @@ class MeterVisualServo:
         self.scan = None
         self.scan_time = 0.0
         self.last_state = ""
+        self.search_started_time = time.time() if self.enabled else 0.0
 
         self.cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
         self.status_pub = rospy.Publisher("/meter_visual_servo/status", String, queue_size=1, latch=True)
@@ -113,10 +116,17 @@ class MeterVisualServo:
         if text in ("start", "enable", "on"):
             self.enabled = True
             self.distance_locked = False
+            self.last_detection = None
+            self.last_detection_time = 0.0
+            self.last_detection_msg_time = 0.0
+            self.last_target_visible = False
+            self.last_center_error = 0.0
+            self.search_started_time = time.time()
             self.publish_status("enabled", "servo enabled")
         elif text in ("stop", "disable", "off"):
             self.enabled = False
             self.distance_locked = False
+            self.search_started_time = 0.0
             self.stop_robot()
             self.publish_status("disabled", "servo disabled")
         elif text in ("reload", "reload_target"):
@@ -274,6 +284,14 @@ class MeterVisualServo:
             self.distance_locked = False
             cmd = Twist()
             target_age = now - self.last_detection_time if self.last_detection_time else 999.0
+            search_age = now - self.search_started_time if self.search_started_time else 999.0
+            if self.last_detection is None and search_age <= self.initial_search_timeout:
+                cmd.angular.z = self.initial_search_wz
+                return cmd, "searching_initial_target", {
+                    "search_age": round(search_age, 3),
+                    "search_timeout": round(self.initial_search_timeout, 3),
+                    "target_class": self.target_class,
+                }
             if abs(self.last_center_error) > 0.05 and target_age <= self.search_timeout:
                 cmd.angular.z = self.search_wz if self.last_center_error < 0 else -self.search_wz
                 return cmd, "searching_lost_target", {

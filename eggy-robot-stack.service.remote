@@ -1,0 +1,18 @@
+[Unit]
+Description=Eggy ROS bringup and rosbridge stack (no map autosave)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/eggy-stack-start
+ExecStop=/usr/local/bin/eggy-stack-stop
+TimeoutStartSec=120
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,80 @@
+#!/bin/bash
+# Usage:
+#   eggy-stack-start [--nav | --navigation] [--mapping]
+#   eggy-stack-start [--nav | --navigation] --amcl [--map /root/catkin_ws/maps/navigation/latest.yaml]
+set -eo pipefail
+
+USE_NAV=true
+USE_MAPPING=true
+USE_AMCL=false
+MAP_FILE="/root/catkin_ws/maps/navigation/latest.yaml"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --nav|--navigation) USE_NAV=true ;;
+    --mapping|--gmapping)
+      USE_MAPPING=true
+      USE_AMCL=false
+      ;;
+    --amcl|--static-map)
+      USE_MAPPING=false
+      USE_AMCL=true
+      ;;
+    --map|--map-file)
+      shift
+      MAP_FILE="${1:-$MAP_FILE}"
+      ;;
+    *)
+      echo "[eggy-stack] WARN: unknown argument: $1" >&2
+      ;;
+  esac
+  shift
+done
+
+source /opt/ros/noetic/setup.bash
+source /root/catkin_ws/devel/setup.bash || true
+
+LOG_DIR=/var/log/eggy
+mkdir -p "$LOG_DIR"
+
+# Kill legacy split launch sessions/processes so this script is the only system entry point.
+for s in eggy_manual_map eggy_auto_map eggy_bag eggy_rosbridge eggy_simple_nav eggy_ros inspection_servo_route eggy_nav_mode_status; do
+  tmux has-session -t "$s" 2>/dev/null && tmux kill-session -t "$s" || true
+done
+for pat in \
+  "roslaunch.*rosbridge_server.*rosbridge_websocket" \
+  "roslaunch.*eggy_bringup.*robot\.launch" \
+  "roslaunch.*eggy_bringup.*eggy_system\.launch" \
+  "eggy_simple_navigator\.py" \
+  "eggy_nav_mode_status\.py" \
+  "inspection_servo_route_runner\.py" \
+  "ros_qt5_gui_adapter\.py" \
+  "/usr/local/bin/eggy-robot-agent" \
+  "eggy_robot_agent\.py"; do
+  pkill -TERM -f "$pat" 2>/dev/null || true
+done
+sleep 2
+for pat in \
+  "roslaunch.*rosbridge_server.*rosbridge_websocket" \
+  "roslaunch.*eggy_bringup.*robot\.launch" \
+  "roslaunch.*eggy_bringup.*eggy_system\.launch" \
+  "eggy_simple_navigator\.py" \
+  "eggy_nav_mode_status\.py" \
+  "inspection_servo_route_runner\.py" \
+  "ros_qt5_gui_adapter\.py" \
+  "/usr/local/bin/eggy-robot-agent" \
+  "eggy_robot_agent\.py"; do
+  pkill -KILL -f "$pat" 2>/dev/null || true
+done
+
+rm -f /tmp/eggy_system.log /tmp/eggy_ros_tmux.log /tmp/eggy_rosbridge.log
+
+LAUNCH_ARGS="use_lidar:=true use_navigation:=$USE_NAV use_cpp_odom_fuser:=true use_mapping:=$USE_MAPPING use_amcl:=$USE_AMCL map_file:=$MAP_FILE"
+tmux new-session -d -s eggy_ros "bash -lc 'source /opt/ros/noetic/setup.bash; source /root/catkin_ws/devel/setup.bash || true; exec roslaunch eggy_bringup eggy_system.launch $LAUNCH_ARGS 2>&1 | tee /tmp/eggy_system.log'"
+
+echo "[eggy-stack] waiting for unified launch topics (navigation=$USE_NAV mapping=$USE_MAPPING amcl=$USE_AMCL map=$MAP_FILE)"
+timeout 80 bash -lc 'source /opt/ros/noetic/setup.bash; source /root/catkin_ws/devel/setup.bash || true; until rostopic echo -n1 /scan >/dev/null 2>&1 && rostopic echo -n1 /odom >/dev/null 2>&1; do sleep 2; done' || echo "[eggy-stack] WARN: some topics not ready within 80s"
+
+echo "[eggy-stack] status"
+tmux ls 2>/dev/null || true
+ss -lntp 2>/dev/null | grep -E ":9090|:11311" || true
+rosnode list 2>/dev/null || true

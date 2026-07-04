@@ -1,5 +1,7 @@
 
 *~
+.codegraph/
+.omx/
 *$py.class
 *.a
 *.bag
