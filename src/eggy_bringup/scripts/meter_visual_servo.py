@@ -314,6 +314,7 @@ class MeterVisualServo:
             if abs(area_error) <= self.area_unlock_tolerance and not group_edge_touch:
                 return Twist(), "target_size_hold", {
                     "class_name": det["class_name"],
+                    "score": round(float(det.get("score", 0.0)), 3),
                     "area_ratio": round(area, 5),
                     "target_area_ratio": round(target, 5),
                     "area_error": round(area_error, 4),
@@ -326,6 +327,7 @@ class MeterVisualServo:
             self.distance_locked = True
             return Twist(), "target_size_reached", {
                 "class_name": det["class_name"],
+                "score": round(float(det.get("score", 0.0)), 3),
                 "area_ratio": round(area, 5),
                 "target_area_ratio": round(target, 5),
                 "center_error": round(det["center_error"], 4),
@@ -346,6 +348,7 @@ class MeterVisualServo:
         state = "servo_forward" if linear > 0 else "servo_backward" if linear < 0 else "blocked"
         return cmd, state, {
             "class_name": det["class_name"],
+            "score": round(float(det.get("score", 0.0)), 3),
             "target_class": self.target_class,
             "area_ratio": round(area, 5),
             "target_area_ratio": round(target, 5),
