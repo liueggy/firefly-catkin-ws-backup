@@ -1,6 +1,4 @@
-﻿
-
-
+#!/usr/bin/env python3
 from flask import Flask, request, jsonify
 from openai import OpenAI
 from PIL import Image
