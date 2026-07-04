@@ -62,6 +62,9 @@ class InspectionServoRouteRunner:
         self.search_timeout = float(rospy.get_param("~search_timeout", 24.0))
         self.search_angular_speed_deg = float(rospy.get_param("~search_angular_speed_deg", 18.0))
         self.search_max_rotation_deg = float(rospy.get_param("~search_max_rotation_deg", 360.0))
+        self.search_step_deg = float(rospy.get_param("~search_step_deg", 24.0))
+        self.search_step_pause_sec = float(rospy.get_param("~search_step_pause_sec", 0.7))
+        self.search_settle_sec = float(rospy.get_param("~search_settle_sec", 0.5))
         self.dry_run = bool(rospy.get_param("~dry_run", False))
 
         self.lock = threading.Lock()
@@ -69,6 +72,7 @@ class InspectionServoRouteRunner:
         self.cancel_requested = False
         self.kimi_results = {}
         self.navigation_active = False
+        self.search_active = False
         self.expected_class = "any"
         self.detection_candidate = None
         self.detection_stable_count = 0
@@ -106,7 +110,7 @@ class InspectionServoRouteRunner:
             return
 
         with self.lock:
-            if not self.navigation_active:
+            if not (self.navigation_active or self.search_active):
                 return
             expected = self.expected_class
 
@@ -411,43 +415,107 @@ class InspectionServoRouteRunner:
         angular_speed_deg = abs(float(wp.get("search_angular_speed_deg", self.search_angular_speed_deg)))
         angular_speed = math.radians(max(1.0, angular_speed_deg))
         max_rotation_deg = abs(float(wp.get("search_max_rotation_deg", self.search_max_rotation_deg)))
+        step_deg = max(3.0, abs(float(wp.get("search_step_deg", self.search_step_deg))))
+        step_rad = math.radians(step_deg)
+        pause_sec = max(0.1, float(wp.get("search_step_pause_sec", self.search_step_pause_sec)))
+        settle_sec = max(0.0, float(wp.get("search_settle_sec", self.search_settle_sec)))
         rotated_rad = 0.0
-        prev_time = time.time()
+        with self.lock:
+            self.search_active = True
+            self.detection_candidate = None
+            self.detection_stable_count = 0
+            self.last_detection_class = ""
+        try:
+            if settle_sec > 0:
+                self.publish_status("search_settling", "waiting briefly for static detection", {
+                    "waypoint": wp,
+                    "settle_sec": round(settle_sec, 2),
+                })
+                candidate = self.wait_for_detection_window(settle_sec)
+                if candidate:
+                    return {
+                        "ok": True,
+                        "state": "target_found",
+                        "target": candidate,
+                        "rotated_deg": 0.0,
+                    }
+            while not rospy.is_shutdown() and time.time() < deadline:
+                if self.cancel_requested:
+                    return {"ok": False, "state": "cancelled", "message": "cancelled"}
+                if rotated_rad >= math.radians(max_rotation_deg):
+                    self.stop_robot()
+                    return {
+                        "ok": False,
+                        "state": "target_not_found",
+                        "message": "no reliable target within stepped search window",
+                        "rotated_deg": round(math.degrees(rotated_rad), 2),
+                    }
+                self.publish_status("search_rotating", "rotating to next search step", {
+                    "waypoint": wp,
+                    "step_deg": round(step_deg, 2),
+                    "rotated_deg": round(math.degrees(rotated_rad), 2),
+                })
+                step_result = self.rotate_step(step_rad, angular_speed)
+                rotated_rad += step_result["rotated_rad"]
+                if not step_result["ok"]:
+                    return {
+                        "ok": False,
+                        "state": step_result["state"],
+                        "message": step_result.get("message", step_result["state"]),
+                        "rotated_deg": round(math.degrees(rotated_rad), 2),
+                    }
+                self.publish_status("search_paused", "holding position for static recognition", {
+                    "waypoint": wp,
+                    "pause_sec": round(pause_sec, 2),
+                    "rotated_deg": round(math.degrees(rotated_rad), 2),
+                })
+                candidate = self.wait_for_detection_window(pause_sec)
+                if candidate:
+                    return {
+                        "ok": True,
+                        "state": "target_found",
+                        "target": candidate,
+                        "rotated_deg": round(math.degrees(rotated_rad), 2),
+                    }
+            return {
+                "ok": False,
+                "state": "search_timeout",
+                "message": "target search timed out",
+                "rotated_deg": round(math.degrees(rotated_rad), 2),
+            }
+        finally:
+            self.stop_robot()
+            with self.lock:
+                self.search_active = False
+
+    def wait_for_detection_window(self, duration_sec):
+        deadline = time.time() + max(0.05, duration_sec)
         while not rospy.is_shutdown() and time.time() < deadline:
             if self.cancel_requested:
-                return {"ok": False, "state": "cancelled", "message": "cancelled"}
+                return None
             candidate = self.current_detection_candidate()
             if candidate:
-                self.stop_robot()
-                return {
-                    "ok": True,
-                    "state": "target_found",
-                    "target": candidate,
-                    "rotated_deg": round(math.degrees(rotated_rad), 2),
-                }
+                return candidate
+            rospy.sleep(0.08)
+        return self.current_detection_candidate()
+
+    def rotate_step(self, target_rad, angular_speed):
+        rotated_rad = 0.0
+        prev_time = time.time()
+        while not rospy.is_shutdown() and rotated_rad < target_rad:
+            if self.cancel_requested:
+                return {"ok": False, "state": "cancelled", "message": "cancelled", "rotated_rad": rotated_rad}
             now = time.time()
             dt = max(0.0, now - prev_time)
             prev_time = now
-            rotated_rad += angular_speed * dt
-            if rotated_rad >= math.radians(max_rotation_deg):
-                self.stop_robot()
-                return {
-                    "ok": False,
-                    "state": "target_not_found",
-                    "message": "no reliable target within one rotation",
-                    "rotated_deg": round(math.degrees(rotated_rad), 2),
-                }
+            remaining = max(0.0, target_rad - rotated_rad)
             cmd = Twist()
-            cmd.angular.z = angular_speed
+            cmd.angular.z = min(angular_speed, max(0.12, remaining / max(dt, 0.1)))
             self.cmd_pub.publish(cmd)
-            rospy.sleep(0.1)
+            rospy.sleep(0.08)
+            rotated_rad += cmd.angular.z * max(0.08, dt)
         self.stop_robot()
-        return {
-            "ok": False,
-            "state": "search_timeout",
-            "message": "target search timed out",
-            "rotated_deg": round(math.degrees(rotated_rad), 2),
-        }
+        return {"ok": True, "state": "step_complete", "rotated_rad": rotated_rad}
 
     def run_kimi_inspection(self, wp):
         if self.dry_run:
