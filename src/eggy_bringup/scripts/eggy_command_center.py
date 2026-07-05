@@ -111,7 +111,7 @@ class EggyCommandCenter:
         self.pub_response = rospy.Publisher('/eggy/command/response', String, queue_size=20)
         self.pub_status = rospy.Publisher('/eggy/command/status', String, queue_size=1, latch=True)
         self.sub_request = rospy.Subscriber('/eggy/command/request', String, self.on_request, queue_size=10)
-        self.status_rate = float(rospy.get_param('~status_rate', 0.2))
+        self.status_rate = float(rospy.get_param('~status_rate', 1.0))
         self.allow_shell = bool(rospy.get_param('~allow_shell', False))
         self.last_status = {}
         rospy.loginfo('eggy_command_center started: request=/eggy/command/request response=/eggy/command/response status=/eggy/command/status')
@@ -321,6 +321,28 @@ class EggyCommandCenter:
             close_fds=True,
         )
 
+    def _wait_mode_ready(self, mode, timeout_sec=4.0):
+        expected = 'static_nav' if mode == 'navigation' else 'mapping_slam'
+        deadline = time.time() + max(0.5, timeout_sec)
+        status = self.build_status()
+        while time.time() < deadline and not rospy.is_shutdown():
+            status = self.build_status()
+            if status.get('mode') == expected:
+                return True, status
+            if mode == 'navigation':
+                map_info = (status.get('topics') or {}).get('/map') or {}
+                nodes = status.get('nodes') or {}
+                if map_info.get('has_publisher') and nodes.get('/amcl', False):
+                    status['mode'] = 'static_nav'
+                    return True, status
+            elif mode == 'mapping':
+                nodes = status.get('nodes') or {}
+                if nodes.get('/slam_gmapping', False):
+                    status['mode'] = 'mapping_slam'
+                    return True, status
+            time.sleep(0.25)
+        return status.get('mode') == expected, status
+
     def switch_mode_fast(self, mode, map_file=None):
         if mode not in ('mapping', 'navigation'):
             raise ValueError('unsupported mode')
@@ -359,34 +381,20 @@ class EggyCommandCenter:
             self._launch_detached(
                 'roslaunch eggy_bringup amcl.launch scan_topic:=/scan odom_frame_id:=odom base_frame_id:=base_link map:=/map',
                 '/tmp/eggy_mode_switch_amcl.log')
-            time.sleep(1.0)
+            ok, _status = self._wait_mode_ready('navigation', timeout_sec=2.0)
             self._launch_detached(
                 'roslaunch eggy_bringup move_base_nav.launch',
                 '/tmp/eggy_mode_switch_movebase.log')
 
-        time.sleep(4.0)
+        time.sleep(0.5)
         self._cleanup_ros_master()
-        status = self.build_status()
         expected = 'static_nav' if mode == 'navigation' else 'mapping_slam'
+        ok, status = self._wait_mode_ready(mode, timeout_sec=4.0)
         if mode == 'mapping' and status.get('mode') == 'unknown':
             status['mode'] = self.last_status.get('mode', 'mapping_slam') if hasattr(self, 'last_status') else 'mapping_slam'
             expected = status['mode']
-        if mode == 'navigation':
-            map_info = (status.get('topics') or {}).get('/map') or {}
-            amcl_up = (status.get('nodes') or {}).get('/amcl', False)
-            if not (map_info.get('has_publisher') and amcl_up):
-                for _ in range(10):
-                    if rospy.is_shutdown():
-                        break
-                    time.sleep(0.5)
-                    status = self.build_status()
-                    map_info = (status.get('topics') or {}).get('/map') or {}
-                    amcl_up = (status.get('nodes') or {}).get('/amcl', False)
-                    if map_info.get('has_publisher') and amcl_up:
-                        break
-                if map_info.get('has_publisher') and amcl_up and status.get('mode') != 'static_nav':
-                    status['mode'] = 'static_nav'
-        ok = status.get('mode') == expected
+        if ok and status.get('mode') != expected:
+            status['mode'] = expected
         return ok, status
 
     def handle_switch_nav_mode(self, req):

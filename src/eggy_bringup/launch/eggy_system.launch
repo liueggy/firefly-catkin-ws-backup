@@ -263,7 +263,7 @@
   <!-- eggy_command_center: Qt 调试命令中心，提供模块状态/控制/参数配置反馈通道 -->
   <group if="$(arg use_command_center)">
     <node pkg="eggy_bringup" type="eggy_command_center.py" name="eggy_command_center" output="screen">
-      <param name="status_rate" value="0.2" />
+      <param name="status_rate" value="1.0" />
       <param name="allow_shell" value="false" />
     </node>
   </group>
