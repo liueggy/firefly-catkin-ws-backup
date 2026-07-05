@@ -17,6 +17,24 @@ struct Detection{ float x1,y1,x2,y2,score; int class_id; };
 static std::string ds(const rknn_tensor_attr& a){ std::ostringstream o; o<<"["; for(uint32_t i=0;i<a.n_dims;i++){ if(i)o<<","; o<<a.dims[i]; } o<<"]"; return o.str(); }
 static bool rf(const std::string& p,std::vector<uint8_t>& d){ std::ifstream f(p,std::ios::binary|std::ios::ate); if(!f)return false; auto s=f.tellg(); if(s<=0)return false; f.seekg(0); d.resize(s); return (bool)f.read((char*)d.data(),s); }
 static float iou(const Detection&a,const Detection&b){ float x1=std::max(a.x1,b.x1),y1=std::max(a.y1,b.y1),x2=std::min(a.x2,b.x2),y2=std::min(a.y2,b.y2),w=std::max(0.f,x2-x1),h=std::max(0.f,y2-y1); float in=w*h,aa=std::max(0.f,a.x2-a.x1)*std::max(0.f,a.y2-a.y1),ab=std::max(0.f,b.x2-b.x1)*std::max(0.f,b.y2-b.y1); return in/(aa+ab-in+1e-6f); }
+static bool keep_detection(const Detection& d,int iw,int ih){
+  if(d.x2<=d.x1 || d.y2<=d.y1) return false;
+  float w = d.x2 - d.x1;
+  float h = d.y2 - d.y1;
+  float area_ratio = (w * h) / std::max(1.f, (float)iw * (float)ih);
+  float aspect = w / std::max(1.f, h);
+  bool touches_border = d.x1 <= 0.02f * iw || d.y1 <= 0.02f * ih || d.x2 >= 0.98f * iw || d.y2 >= 0.98f * ih;
+  if(d.class_id == 0){
+    if(area_ratio > 0.12f) return false;
+    if(aspect < 0.55f || aspect > 1.90f) return false;
+    if(area_ratio > 0.08f && touches_border) return false;
+  }else{
+    if(area_ratio > 0.20f) return false;
+    if(aspect < 0.45f || aspect > 2.60f) return false;
+    if(area_ratio > 0.14f && touches_border) return false;
+  }
+  return true;
+}
 
 class Node{
 public:
