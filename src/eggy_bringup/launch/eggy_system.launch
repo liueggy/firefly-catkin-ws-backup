@@ -35,15 +35,15 @@
   <arg name="inspection_search_min_score" default="0.55" />
   <arg name="inspection_search_stable_frames" default="10" />
   <arg name="inspection_search_angular_speed_deg" default="18" />
-  <arg name="inspection_search_step_deg" default="24" />
-  <arg name="inspection_search_step_pause_sec" default="0.7" />
+  <arg name="inspection_search_step_deg" default="90" />
+  <arg name="inspection_search_step_pause_sec" default="1.0" />
   <arg name="inspection_search_settle_sec" default="0.5" />
   <arg name="use_command_center" default="true" />
   <arg name="use_network_status" default="true" />
   <arg name="use_shell_bridge" default="true" />
   <arg name="use_nav_mode_status" default="true" />
   <arg name="use_auto_relocalizer" default="true" />
-  <arg name="auto_relocalizer_dry_run" default="true" />
+  <arg name="auto_relocalizer_dry_run" default="false" />
   <arg name="use_usart1" default="true" />
   <arg name="use_voice_controller" default="true" />
   <arg name="usart1_port" default="/dev/eggy_usart1" />
@@ -242,8 +242,15 @@
       <param name="dry_run" value="$(arg auto_relocalizer_dry_run)" />
       <param name="angular_speed" value="0.5235987756" />
       <param name="max_angular_speed" value="0.80" />
-      <param name="timeout" value="35.0" />
+      <param name="default_method" value="scan_match" />
+      <param name="timeout" value="5.0" />
       <param name="scan_timeout" value="1.0" />
+      <param name="map_timeout" value="10.0" />
+      <param name="search_xy_window" value="0.85" />
+      <param name="search_xy_step" value="0.10" />
+      <param name="search_yaw_window_deg" value="55.0" />
+      <param name="search_yaw_step_deg" value="5.0" />
+      <param name="min_match_score" value="0.56" />
       <param name="xy_variance_max" value="0.20" />
       <param name="yaw_variance_max" value="0.12" />
       <param name="stable_samples" value="8" />

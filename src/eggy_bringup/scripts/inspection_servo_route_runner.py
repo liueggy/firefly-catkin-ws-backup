@@ -62,8 +62,8 @@ class InspectionServoRouteRunner:
         self.search_timeout = float(rospy.get_param("~search_timeout", 24.0))
         self.search_angular_speed_deg = float(rospy.get_param("~search_angular_speed_deg", 18.0))
         self.search_max_rotation_deg = float(rospy.get_param("~search_max_rotation_deg", 360.0))
-        self.search_step_deg = float(rospy.get_param("~search_step_deg", 24.0))
-        self.search_step_pause_sec = float(rospy.get_param("~search_step_pause_sec", 0.7))
+        self.search_step_deg = float(rospy.get_param("~search_step_deg", 90.0))
+        self.search_step_pause_sec = float(rospy.get_param("~search_step_pause_sec", 1.0))
         self.search_settle_sec = float(rospy.get_param("~search_settle_sec", 0.5))
         self.dry_run = bool(rospy.get_param("~dry_run", False))
 
@@ -455,8 +455,15 @@ class InspectionServoRouteRunner:
                     "step_deg": round(step_deg, 2),
                     "rotated_deg": round(math.degrees(rotated_rad), 2),
                 })
-                step_result = self.rotate_step(step_rad, angular_speed)
+                step_result = self.rotate_step(step_rad, angular_speed, wp)
                 rotated_rad += step_result["rotated_rad"]
+                if step_result.get("target"):
+                    return {
+                        "ok": True,
+                        "state": "target_found",
+                        "target": step_result["target"],
+                        "rotated_deg": round(math.degrees(rotated_rad), 2),
+                    }
                 if not step_result["ok"]:
                     return {
                         "ok": False,
@@ -499,12 +506,21 @@ class InspectionServoRouteRunner:
             rospy.sleep(0.08)
         return self.current_detection_candidate()
 
-    def rotate_step(self, target_rad, angular_speed):
+    def rotate_step(self, target_rad, angular_speed, wp):
         rotated_rad = 0.0
         prev_time = time.time()
         while not rospy.is_shutdown() and rotated_rad < target_rad:
             if self.cancel_requested:
                 return {"ok": False, "state": "cancelled", "message": "cancelled", "rotated_rad": rotated_rad}
+            candidate = self.current_detection_candidate()
+            if candidate:
+                self.stop_robot()
+                self.publish_status("target_confirmed", "target detected while rotating", {
+                    "waypoint": wp,
+                    "target": candidate,
+                    "rotated_deg": round(math.degrees(rotated_rad), 2),
+                })
+                return {"ok": True, "state": "target_found", "target": candidate, "rotated_rad": rotated_rad}
             now = time.time()
             dt = max(0.0, now - prev_time)
             prev_time = now
