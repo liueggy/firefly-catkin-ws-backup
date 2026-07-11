@@ -1,4 +1,6 @@
-# TEB local planner parameters for the mecanum base.
+# TEB local planner parameters — balanced car-like profile.
+# max_vel_y=0.10: enough lateral freedom for smooth obstacle avoidance,
+#   but too slow to look like mecanum drifting (original was 0.20).
 TebLocalPlannerROS:
 
   odom_topic: /odom
@@ -9,15 +11,14 @@ TebLocalPlannerROS:
     type: "polygon"
     vertices: [[-0.15, -0.10], [-0.15, 0.10], [0.15, 0.10], [0.15, -0.10]]
 
-  # max_vel_y > 0 and weight_kinematics_nh = 0 enable holonomic trajectories.
   min_turning_radius: 0.0
   wheelbase: 0.25
   cmd_angle_instead_rotvel: false
 
-  # Conservative exploration limits for the current STM32 base driver.
+  # Velocity limits: slight lateral (0.10) for obstacle avoidance, not drifting.
   max_vel_x: 0.25
-  max_vel_x_backwards: 0.25
-  max_vel_y: 0.20
+  max_vel_x_backwards: 0.10
+  max_vel_y: 0.10
   max_vel_trans: 0.25
   min_vel_trans: 0.01
   max_vel_theta: 0.80
@@ -25,7 +26,7 @@ TebLocalPlannerROS:
 
   # --- 加速度限制 ---
   acc_lim_x: 0.6
-  acc_lim_y: 0.6
+  acc_lim_y: 0.3
   acc_lim_theta: 1.2
 
   # --- 轨迹优化 ---
@@ -42,14 +43,12 @@ TebLocalPlannerROS:
   optimization_activate: true
   optimization_verbose: false
 
-  # --- 目标容差 ---
-  xy_goal_tolerance: 0.18
-  yaw_goal_tolerance: 0.60
-  free_goal_vel: true
+  # --- 目标容差：位置准 + 朝向准 ---
+  xy_goal_tolerance: 0.12
+  yaw_goal_tolerance: 0.10
+  free_goal_vel: false
 
   # --- 障碍物 ---
-  # Narrow-passage profile. Keep this above zero so the planner still respects
-  # laser obstacles, but avoid treating valid tight corridors as impossible.
   min_obstacle_dist: 0.12
   inflation_dist: 0.22
   include_costmap_obstacles: true
@@ -59,11 +58,11 @@ TebLocalPlannerROS:
   # --- 可行性检查 ---
   feasibility_check_no_poses: 2
 
-  # --- 权重 ---
+  # --- 权重：偏好前向，允许微调横移 ---
   weight_kinematics_nh: 0.0
-  weight_kinematics_forward_drive: 0.0
-  weight_max_vel_y: 2.0
-  weight_acc_lim_y: 1.0
+  weight_kinematics_forward_drive: 1.0
+  weight_max_vel_y: 1.0
+  weight_acc_lim_y: 0.5
   weight_kinematics_turning_radius: 0.0
   weight_optimaltime: 1.5
   weight_shortest_path: 10.0

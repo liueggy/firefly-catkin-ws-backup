@@ -227,6 +227,40 @@ class EggyCommandCenter:
             'exit_code': code, 'output': out, 'log': '/tmp/eggy_mapping_manual.log'
         })
 
+
+    def handle_mapping_reset(self, req):
+        """一键清空当前地图并重新开始建图：先杀 gmapping，再重启。"""
+        already_running = '/slam_gmapping' in rosnode_list()
+        if already_running:
+            kill_code, kill_out = run_cmd('rosnode kill /slam_gmapping 2>&1 ' '|| true', timeout=8)
+            time.sleep(1.5)
+            if '/slam_gmapping' in rosnode_list():
+                return self.make_response(req, False, 'gmapping 停止失败，未能清除地图', {
+                    'exit_code': kill_code, 'output': kill_out
+                })
+            rospy.loginfo('mapping_reset: gmapping killed (exit=%s)', kill_code)
+        else:
+            kill_code, kill_out = 0, 'gmapping was not running'
+        # 同时清理 move_base costmaps，避免旧地图残留
+        try:
+            rospy.wait_for_service('/move_base/clear_costmaps', timeout=3.0)
+            srv = rospy.ServiceProxy('/move_base/clear_costmaps', Empty)
+            srv()
+        except Exception:
+            pass
+        cmd = ('nohup roslaunch eggy_bringup mapping_light.launch '
+                'scan_topic:=/scan base_frame:=base_link odom_frame:=odom '
+                '>/tmp/eggy_mapping_manual.log 2>&1 &')
+        code, out = run_cmd(cmd, timeout=3)
+        time.sleep(2.5)
+        ok = '/slam_gmapping' in rosnode_list()
+        return self.make_response(
+            req, ok,
+            '地图已清除，gmapping 已重新启动' if ok else 'gmapping 重启失败',
+            {'exit_code': code, 'output': out,
+             'log': '/tmp/eggy_mapping_manual.log',
+             'was_running': already_running})
+
     def handle_list_maps(self, req):
         cmd = "find /root/catkin_ws/maps -maxdepth 3 -name '*.yaml' -printf '%T@ %p\n' | sort -nr | awk '{print $2}'"
         code, out = run_cmd(cmd, timeout=5)
@@ -651,6 +685,8 @@ class EggyCommandCenter:
             return self.handle_mapping_stop(req)
         if key in ('mapping_start', 'start_mapping') or (command == 'module_start' and target == 'mapping'):
             return self.handle_mapping_start(req)
+        if key in ('mapping_reset', 'reset_mapping', 'clear_mapping'):
+            return self.handle_mapping_reset(req)
         if key == 'list_maps':
             return self.handle_list_maps(req)
         if key == 'switch_nav_mode':
@@ -675,7 +711,8 @@ class EggyCommandCenter:
             return self.make_response(req, False, 'set_mode 暂未自动执行：后续将接入 mapping/static_nav 栈切换；当前先用 status/模块控制做调试闭环')
         return self.make_response(req, False, '未知命令', {'supported': [
             'status', 'camera_start', 'camera_stop', 'clear_costmaps',
-            'mapping_start', 'mapping_stop', 'list_maps', 'switch_nav_mode', 'upload_map',
+            'mapping_start', 'mapping_stop', 'mapping_reset', 'list_maps',
+            'switch_nav_mode', 'upload_map',
             'get_param', 'set_param', 'dyn_get', 'dyn_set', 'dyn_get_many', 'dyn_set_many'
         ]})
 
