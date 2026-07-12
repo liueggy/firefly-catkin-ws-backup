@@ -1,0 +1,18 @@
+<launch>
+  <!-- 固定地图导航配置：只启用 map_server、AMCL 和 move_base 导航链路。 -->
+  <arg name="map_file" default="/root/catkin_ws/maps/navigation/latest.yaml" />
+
+  <include file="$(find eggy_bringup)/launch/eggy_system.launch">
+    <arg name="use_mapping" value="false" />
+    <arg name="use_amcl" value="true" />
+    <arg name="map_file" value="$(arg map_file)" />
+    <arg name="use_navigation" value="true" />
+    <!-- 保留摄像头节点，便于 Qt 在普通导航模式下打开实时画面。 -->
+    <arg name="use_camera" value="true" />
+    <arg name="use_meter_rknn" value="false" />
+    <arg name="use_kimi_server" value="false" />
+    <arg name="use_kimi_bridge" value="false" />
+    <arg name="use_inspection_servo_route" value="false" />
+    <arg name="use_voice_controller" value="false" />
+  </include>
+</launch>
