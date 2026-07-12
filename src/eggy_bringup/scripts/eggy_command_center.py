@@ -472,6 +472,26 @@ class EggyCommandCenter:
         except Exception as exc:
             return self.make_response(req, False, '导航模式切换失败', {'error': str(exc)})
 
+    def handle_switch_profile(self, req):
+        params = req.get('params') or {}
+        profile = str(params.get('profile', params.get('mode', ''))).strip().lower()
+        map_file = str(params.get('map_file', '')).strip()
+        if profile not in ('mapping', 'navigation', 'inspection'):
+            return self.make_response(req, False, '未知 profile，需要 mapping、navigation 或 inspection')
+        if profile in ('navigation', 'inspection') and not map_file:
+            return self.make_response(req, False, '导航或巡检 profile 必须提供 params.map_file')
+
+        args = ['--' + ('amcl' if profile == 'navigation' else profile)]
+        if map_file:
+            args.extend(['--map', shlex.quote(map_file)])
+        command = '/usr/local/bin/eggy-stack-start ' + ' '.join(args)
+        self._launch_detached(command, '/tmp/eggy_profile_switch.log')
+        return self.make_response(req, True, '已请求切换运行 profile，等待节点重新上线', {
+            'requested_profile': profile,
+            'map_file': map_file,
+            'restart': True,
+        })
+
     def handle_upload_map(self, req):
         params = req.get('params') or {}
         map_name = str(params.get('map_name', '')).strip()
@@ -707,6 +727,8 @@ class EggyCommandCenter:
             return self.handle_list_maps(req)
         if key == 'switch_nav_mode':
             return self.handle_switch_nav_mode(req)
+        if key == 'switch_profile':
+            return self.handle_switch_profile(req)
         if key == 'upload_map':
             return self.handle_upload_map(req)
         if key == 'get_param':
@@ -728,7 +750,7 @@ class EggyCommandCenter:
         return self.make_response(req, False, '未知命令', {'supported': [
             'status', 'camera_start', 'camera_stop', 'clear_costmaps',
             'mapping_start', 'mapping_stop', 'mapping_reset', 'list_maps',
-            'switch_nav_mode', 'upload_map',
+            'switch_nav_mode', 'switch_profile', 'upload_map',
             'get_param', 'set_param', 'dyn_get', 'dyn_set', 'dyn_get_many', 'dyn_set_many'
         ]})
 

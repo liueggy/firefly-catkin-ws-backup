@@ -1,12 +1,14 @@
 #!/bin/bash
 # Usage:
-#   eggy-stack-start [--nav | --navigation] [--mapping]
-#   eggy-stack-start [--nav | --navigation] --amcl [--map /root/catkin_ws/maps/navigation/latest.yaml]
+#   eggy-stack-start [--mapping]
+#   eggy-stack-start --amcl [--map /root/catkin_ws/maps/navigation/latest.yaml]
+#   eggy-stack-start --inspection [--map /root/catkin_ws/maps/navigation/latest.yaml]
 set -eo pipefail
 
 USE_NAV=true
 USE_MAPPING=true
 USE_AMCL=false
+USE_INSPECTION=false
 MAP_FILE="/root/catkin_ws/maps/navigation/latest.yaml"
 LAUNCH_FILE="mapping_profile.launch"
 while [ "$#" -gt 0 ]; do
@@ -20,7 +22,14 @@ while [ "$#" -gt 0 ]; do
     --amcl|--static-map)
       USE_MAPPING=false
       USE_AMCL=true
+      USE_INSPECTION=false
       LAUNCH_FILE="navigation_profile.launch"
+      ;;
+    --inspection|--inspect)
+      USE_MAPPING=false
+      USE_AMCL=true
+      USE_INSPECTION=true
+      LAUNCH_FILE="inspection_profile.launch"
       ;;
     --map|--map-file)
       shift
@@ -71,14 +80,14 @@ done
 
 rm -f /tmp/eggy_system.log /tmp/eggy_ros_tmux.log /tmp/eggy_rosbridge.log
 
-if [ "$LAUNCH_FILE" = "navigation_profile.launch" ]; then
+if [ "$LAUNCH_FILE" = "navigation_profile.launch" ] || [ "$LAUNCH_FILE" = "inspection_profile.launch" ]; then
   LAUNCH_ARGS="map_file:=$MAP_FILE"
 else
   LAUNCH_ARGS=""
 fi
 tmux new-session -d -s eggy_ros "bash -lc 'source /opt/ros/noetic/setup.bash; source /root/catkin_ws/devel/setup.bash || true; exec roslaunch eggy_bringup $LAUNCH_FILE $LAUNCH_ARGS 2>&1 | tee /tmp/eggy_system.log'"
 
-echo "[eggy-stack] waiting for profile=$LAUNCH_FILE (navigation=$USE_NAV mapping=$USE_MAPPING amcl=$USE_AMCL map=$MAP_FILE)"
+echo "[eggy-stack] waiting for profile=$LAUNCH_FILE (navigation=$USE_NAV mapping=$USE_MAPPING amcl=$USE_AMCL inspection=$USE_INSPECTION map=$MAP_FILE)"
 timeout 80 bash -lc 'source /opt/ros/noetic/setup.bash; source /root/catkin_ws/devel/setup.bash || true; until rostopic echo -n1 /scan >/dev/null 2>&1 && rostopic echo -n1 /odom >/dev/null 2>&1; do sleep 2; done' || echo "[eggy-stack] WARN: some topics not ready within 80s"
 
 echo "[eggy-stack] status"
