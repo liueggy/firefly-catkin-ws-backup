@@ -1,16 +1,21 @@
 <launch>
   <!-- 巡检配置：固定地图导航基础上启用摄像头、RKNN、Kimi 和巡检路线。 -->
   <arg name="map_file" default="/root/catkin_ws/maps/navigation/latest.yaml" />
+  <arg name="camera_fps" default="10" />
+  <arg name="meter_frame_skip" default="2" />
 
   <include file="$(find eggy_bringup)/launch/eggy_system.launch">
     <arg name="use_mapping" value="false" />
     <arg name="use_amcl" value="true" />
     <arg name="map_file" value="$(arg map_file)" />
+    <arg name="camera_fps" value="$(arg camera_fps)" />
     <arg name="use_navigation" value="true" />
     <arg name="use_camera" value="true" />
     <arg name="use_meter_rknn" value="true" />
     <arg name="use_kimi_server" value="true" />
     <arg name="use_kimi_bridge" value="true" />
     <arg name="use_inspection_servo_route" value="true" />
+    <!-- 识别默认每隔一帧处理一次，降低 RKNN 占用；需要实时检测时可传 meter_frame_skip:=1。 -->
+    <arg name="meter_frame_skip" value="$(arg meter_frame_skip)" />
   </include>
 </launch>
