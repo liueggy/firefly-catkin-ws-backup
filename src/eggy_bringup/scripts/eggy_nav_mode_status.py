@@ -54,13 +54,21 @@ class EggyNavModeStatus(object):
         map_server_running = _node_present(nodes, "/map_server")
         rosbridge_running = _node_present(nodes, "/rosbridge_websocket")
         runner_running = _node_present(nodes, "/inspection_servo_route_runner")
+        meter_running = _node_present(nodes, "/meter_rknn_detect_cpp")
+        kimi_server_running = _node_present(nodes, "/kimi_inspection_server")
+        kimi_bridge_running = _node_present(nodes, "/kimi_inspection_bridge")
+        inspection_running = runner_running or meter_running or kimi_server_running or kimi_bridge_running
 
         conflict = (
             (self.use_amcl and self.use_mapping)
             or (amcl_running and gmapping_running)
         )
 
-        if amcl_running or self.use_amcl:
+        if inspection_running and (amcl_running or self.use_amcl):
+            mode = "inspection"
+            localizer = "amcl"
+            initialpose_supported = True
+        elif amcl_running or self.use_amcl:
             mode = "navigation"
             localizer = "amcl"
             initialpose_supported = True
@@ -76,6 +84,9 @@ class EggyNavModeStatus(object):
         if conflict:
             state = "conflict"
             message = "AMCL 与 gmapping 同时启用，map->odom 可能冲突。"
+        elif mode == "inspection":
+            state = "ok" if move_base_running and runner_running else "starting"
+            message = "巡检模式，AMCL 导航与识别/巡检节点已纳入统一状态。"
         elif mode == "navigation":
             state = "ok" if move_base_running else "starting"
             message = "静态地图 + AMCL 导航模式，Qt 重定位会发布 /initialpose。"
@@ -93,9 +104,19 @@ class EggyNavModeStatus(object):
             and not conflict
         )
 
+        capabilities = {
+            "initialpose": initialpose_supported and not conflict,
+            "mapping": bool(gmapping_running or self.use_mapping),
+            "navigation": bool(move_base_running and (amcl_running or self.use_amcl)),
+            "inspection": bool(inspection_running and move_base_running),
+            "camera": _node_present(nodes, "/eggy_camera"),
+            "meter_detection": meter_running,
+        }
+
         return {
             "stamp": time.time(),
             "mode": mode,
+            "profile": mode,
             "state": state,
             "localizer": localizer,
             "map_file": self.map_file,
@@ -111,9 +132,13 @@ class EggyNavModeStatus(object):
                 "map_server": map_server_running,
                 "rosbridge": rosbridge_running,
                 "inspection_runner": runner_running,
+                "meter_detection": meter_running,
+                "kimi_server": kimi_server_running,
+                "kimi_bridge": kimi_bridge_running,
             },
             "initialpose_supported": initialpose_supported and not conflict,
             "task_chain_ready": task_chain_ready,
+            "capabilities": capabilities,
             "message": message,
         }
 

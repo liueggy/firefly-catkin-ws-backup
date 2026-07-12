@@ -30,6 +30,8 @@ KNOWN_NODES = [
     '/stm32_base_driver', '/rplidarNode', '/eggy_external_imu_odom_fuser',
     '/slam_gmapping', '/map_server', '/amcl', '/move_base',
     '/ros_qt5_gui_adapter', '/rosbridge_websocket', '/eggy_camera',
+    '/meter_rknn_detect_cpp', '/kimi_inspection_server',
+    '/kimi_inspection_bridge', '/inspection_servo_route_runner',
     '/eggy_health_aggregator', '/robot_state_publisher'
 ]
 
@@ -145,7 +147,12 @@ class EggyCommandCenter:
             'has_publisher': bool(pub_map.get(name, [])),
         } for name in KEY_TOPICS}
 
-        if node_state.get('/slam_gmapping') and not node_state.get('/amcl') and not node_state.get('/map_server'):
+        inspection_nodes = ('/meter_rknn_detect_cpp', '/kimi_inspection_server',
+                            '/kimi_inspection_bridge', '/inspection_servo_route_runner')
+        inspection_active = any(node_state.get(name, False) for name in inspection_nodes)
+        if inspection_active and node_state.get('/amcl'):
+            mode = 'inspection'
+        elif node_state.get('/slam_gmapping') and not node_state.get('/amcl') and not node_state.get('/map_server'):
             mode = 'mapping_slam'
         elif node_state.get('/amcl') and node_state.get('/map_server'):
             mode = 'static_nav'
@@ -161,6 +168,7 @@ class EggyCommandCenter:
         return {
             'stamp': self.now(),
             'mode': mode,
+            'profile': mode,
             'loadavg': [round(load1, 2), round(load5, 2), round(load15, 2)],
             'nodes': node_state,
             'topics': topic_state,
@@ -168,6 +176,14 @@ class EggyCommandCenter:
                 'running': node_state.get('/eggy_camera', False),
                 'pid': camera_pid if camera_pid_code == 0 else '',
                 'v4l2_pid': v4l2_pid if v4l2_code == 0 else '',
+            },
+            'capabilities': {
+                'initialpose': mode in ('static_nav', 'inspection'),
+                'mapping': mode == 'mapping_slam',
+                'navigation': mode in ('static_nav', 'inspection'),
+                'inspection': mode == 'inspection',
+                'camera': node_state.get('/eggy_camera', False),
+                'meter_detection': node_state.get('/meter_rknn_detect_cpp', False),
             },
         }
 
