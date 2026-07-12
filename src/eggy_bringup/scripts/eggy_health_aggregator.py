@@ -38,7 +38,7 @@ ODOM_TIMEOUT_S = 1.0
 CAMERA_TIMEOUT_S = 2.0
 KEY_NODES = ['/move_base', '/rplidarNode', '/stm32_base_driver',
              '/eggy_external_imu_odom_fuser',
-             '/ros_qt5_gui_adapter', '/rosbridge_websocket', '/eggy_camera']
+             '/ros_qt5_gui_adapter', '/rosbridge_websocket']
 
 MOVE_BASE_STATUS = {
     0: 'PENDING', 1: 'ACTIVE(导航中)', 2: 'PREEMPTED', 3: 'SUCCEEDED(已到达)',
@@ -218,9 +218,12 @@ class HealthAggregator:
         map_server_alive = any(
             n == '/map_server' or n.startswith('/map_server_') for n in alive)
         amcl_mode = '/amcl' in alive or map_server_alive
+        inspection_nodes = ['/meter_rknn_detect_cpp', '/kimi_inspection_server',
+                            '/kimi_inspection_bridge', '/inspection_servo_route_runner']
+        inspection_mode = amcl_mode and any(n in alive for n in inspection_nodes)
         mode_nodes = ['/amcl'] if amcl_mode else ['/slam_gmapping']
         required_nodes = KEY_NODES + mode_nodes
-        pairs = [('定位模式', 'AMCL' if amcl_mode else '建图')]
+        pairs = [('定位模式', '巡检' if inspection_mode else ('AMCL' if amcl_mode else '建图'))]
         if amcl_mode:
             pairs.append(('/map_server', '在线' if map_server_alive else '掉线'))
         missing = []
@@ -231,6 +234,12 @@ class HealthAggregator:
             pairs.append((n, '在线' if ok else '掉线'))
             if not ok:
                 missing.append(n)
+        if inspection_mode:
+            for n in inspection_nodes:
+                ok = n in alive
+                pairs.append((n, '在线' if ok else '掉线'))
+                if not ok:
+                    missing.append(n)
         nlvl = DiagnosticStatus.ERROR if missing else DiagnosticStatus.OK
         arr.status.append(make_status(
             nlvl, 'ROS节点',
@@ -273,14 +282,20 @@ class HealthAggregator:
             lc = self.last_camera
             camera_frame = self.camera_frame_id
         camera_node_alive = '/eggy_camera' in alive
-        if lc is None:
+        if not inspection_mode:
+            arr.status.append(make_status(
+                DiagnosticStatus.OK, '摄像头', '非巡检模式，摄像头不作为必需项',
+                '视觉', [('node', 'online' if camera_node_alive else 'disabled'),
+                       ('required', 'false'),
+                       ('image_topic', '/camera/front/image/compressed')]))
+        elif lc is None:
             clvl = DiagnosticStatus.STALE if camera_node_alive else DiagnosticStatus.ERROR
             arr.status.append(make_status(
                 clvl, '摄像头', '节点在线但无图像' if camera_node_alive else '摄像头节点离线',
                 '视觉', [('node', 'online' if camera_node_alive else 'offline'),
                        ('image_topic', '/camera/front/image/compressed'),
                        ('frame_age_s', 'n/a')]))
-        else:
+        elif inspection_mode:
             age = (now - lc).to_sec()
             clvl = DiagnosticStatus.OK if camera_node_alive and age < CAMERA_TIMEOUT_S else DiagnosticStatus.ERROR
             if not camera_node_alive:
