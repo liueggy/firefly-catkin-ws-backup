@@ -15,6 +15,7 @@ import time
 import base64
 import re
 import shlex
+import socket
 import yaml
 
 import rospy
@@ -62,6 +63,14 @@ def run_cmd(cmd, timeout=5):
             return 124, ((out or '').strip() + '\nTIMEOUT').strip()
     except Exception as exc:
         return 1, str(exc)
+
+
+def http_service_alive(host, port):
+    try:
+        with socket.create_connection((host, int(port)), timeout=0.25):
+            return True
+    except (OSError, ValueError):
+        return False
 
 
 def rosnode_list():
@@ -140,6 +149,7 @@ class EggyCommandCenter:
         topics = rostopic_list()
         pub_map, sub_map = rostopic_pub_sub_state()
         node_state = {name: (name in nodes) for name in KNOWN_NODES}
+        node_state['/kimi_inspection_server'] = http_service_alive('127.0.0.1', 8000)
         topic_state = {name: {
             'exists': (name in topics),
             'publishers': pub_map.get(name, []),

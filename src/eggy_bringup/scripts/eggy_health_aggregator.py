@@ -19,6 +19,7 @@ level: 0=OK 1=WARN 2=ERROR 3=STALE
 注: /diagnostics 上 stm32_base_driver 也在发底盘串口诊断，多发布者共存聚合。
 """
 import rospy
+import socket
 import threading
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from sensor_msgs.msg import LaserScan, BatteryState, CompressedImage
@@ -48,6 +49,14 @@ MOVE_BASE_STATUS = {
 
 def kv(k, v):
     return KeyValue(key=str(k), value=str(v))
+
+
+def http_service_alive(host, port):
+    try:
+        with socket.create_connection((host, int(port)), timeout=0.25):
+            return True
+    except (OSError, ValueError):
+        return False
 
 
 def make_status(level, name, message, hardware_id, pairs):
@@ -220,7 +229,11 @@ class HealthAggregator:
         amcl_mode = '/amcl' in alive or map_server_alive
         inspection_nodes = ['/meter_rknn_detect_cpp', '/kimi_inspection_server',
                             '/kimi_inspection_bridge', '/inspection_servo_route_runner']
-        inspection_mode = amcl_mode and any(n in alive for n in inspection_nodes)
+        kimi_server_alive = http_service_alive('127.0.0.1', 8000)
+        inspection_mode = amcl_mode and (
+            any(n in alive for n in inspection_nodes if n != '/kimi_inspection_server')
+            or kimi_server_alive
+        )
         mode_nodes = ['/amcl'] if amcl_mode else ['/slam_gmapping']
         required_nodes = KEY_NODES + mode_nodes
         pairs = [('定位模式', '巡检' if inspection_mode else ('AMCL' if amcl_mode else '建图'))]
@@ -236,7 +249,7 @@ class HealthAggregator:
                 missing.append(n)
         if inspection_mode:
             for n in inspection_nodes:
-                ok = n in alive
+                ok = kimi_server_alive if n == '/kimi_inspection_server' else n in alive
                 pairs.append((n, '在线' if ok else '掉线'))
                 if not ok:
                     missing.append(n)

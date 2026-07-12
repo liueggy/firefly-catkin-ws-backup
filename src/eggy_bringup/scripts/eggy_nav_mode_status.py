@@ -9,6 +9,7 @@ status so the UI and task-chain controls can make that distinction explicit.
 """
 
 import json
+import socket
 import time
 
 import rosnode
@@ -26,6 +27,14 @@ def _as_bool(value):
 
 def _node_present(nodes, name):
     return name in nodes or any(n.endswith("/" + name.lstrip("/")) for n in nodes)
+
+
+def _http_service_present(host, port):
+    try:
+        with socket.create_connection((host, int(port)), timeout=0.25):
+            return True
+    except (OSError, ValueError):
+        return False
 
 
 class EggyNavModeStatus(object):
@@ -55,7 +64,7 @@ class EggyNavModeStatus(object):
         rosbridge_running = _node_present(nodes, "/rosbridge_websocket")
         runner_running = _node_present(nodes, "/inspection_servo_route_runner")
         meter_running = _node_present(nodes, "/meter_rknn_detect_cpp")
-        kimi_server_running = _node_present(nodes, "/kimi_inspection_server")
+        kimi_server_running = _http_service_present("127.0.0.1", 8000)
         kimi_bridge_running = _node_present(nodes, "/kimi_inspection_bridge")
         inspection_running = runner_running or meter_running or kimi_server_running or kimi_bridge_running
 
