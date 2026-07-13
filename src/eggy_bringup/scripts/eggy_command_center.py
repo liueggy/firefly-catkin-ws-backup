@@ -13,9 +13,12 @@ import signal
 import subprocess
 import time
 import base64
+import hashlib
 import re
 import shlex
+import shutil
 import socket
+import tempfile
 import yaml
 
 import rospy
@@ -23,6 +26,7 @@ import rosgraph
 import cv2
 from std_msgs.msg import String
 from nav_msgs.msg import OccupancyGrid
+from nav_msgs.srv import GetMap
 from std_srvs.srv import Empty
 import dynamic_reconfigure.client
 
@@ -41,6 +45,9 @@ KEY_TOPICS = [
     '/nav_goal', '/plan', '/local_plan', '/global_costmap/costmap',
     '/local_costmap/costmap', '/camera/front/image/compressed', '/diagnostics'
 ]
+
+MAP_LIBRARY_ROOT = '/root/catkin_ws/maps/library'
+ACTIVE_MAP_LINK = '/root/catkin_ws/maps/active'
 
 
 def run_cmd(cmd, timeout=5):
@@ -175,6 +182,15 @@ class EggyCommandCenter:
         camera_pid_code, camera_pid = run_cmd("pgrep -f '[e]ggy_camera_node.py' | head -1", timeout=2)
         v4l2_code, v4l2_pid = run_cmd("pgrep -x v4l2-ctl | head -1", timeout=2)
 
+        active_map = {}
+        active_metadata = os.path.join(ACTIVE_MAP_LINK, 'metadata.json')
+        try:
+            with open(active_metadata, 'r', encoding='utf-8') as stream:
+                active_map = json.load(stream)
+            active_map['yaml'] = os.path.join(ACTIVE_MAP_LINK, 'map.yaml')
+        except Exception:
+            active_map = {}
+
         return {
             'stamp': self.now(),
             'mode': mode,
@@ -187,6 +203,7 @@ class EggyCommandCenter:
                 'pid': camera_pid if camera_pid_code == 0 else '',
                 'v4l2_pid': v4l2_pid if v4l2_code == 0 else '',
             },
+            'active_map': active_map,
             'capabilities': {
                 'initialpose': mode in ('static_nav', 'inspection'),
                 'mapping': mode == 'mapping_slam',
@@ -288,7 +305,9 @@ class EggyCommandCenter:
              'was_running': already_running})
 
     def handle_list_maps(self, req):
-        cmd = "find /root/catkin_ws/maps -maxdepth 3 -name '*.yaml' -printf '%T@ %p\n' | sort -nr | awk '{print $2}'"
+        cmd = ("find " + shlex.quote(MAP_LIBRARY_ROOT) +
+               " -mindepth 2 -maxdepth 2 -name 'map.yaml' "
+               "-printf '%T@ %p\\n' | sort -nr | awk '{print $2}'")
         code, out = run_cmd(cmd, timeout=5)
         maps = [x.strip() for x in out.splitlines() if x.strip()] if code == 0 else []
         return self.make_response(req, bool(maps), '地图列表读取成功' if maps else '未找到地图文件', {
@@ -403,6 +422,37 @@ class EggyCommandCenter:
             time.sleep(0.25)
         return status.get('mode') == expected, status
 
+    def _wait_map_matches(self, yaml_path, timeout_sec=6.0):
+        """Wait until /static_map serves the exact selected map metadata."""
+        try:
+            with open(yaml_path, 'r', encoding='utf-8') as stream:
+                config = yaml.safe_load(stream) or {}
+            image_path = str(config.get('image', '')).strip()
+            if not os.path.isabs(image_path):
+                image_path = os.path.join(os.path.dirname(yaml_path), image_path)
+            image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+            if image is None:
+                return False, {'error': '地图图像无法读取'}
+            expected_height, expected_width = image.shape[:2]
+            expected_resolution = float(config['resolution'])
+            rospy.wait_for_service('/static_map', timeout=timeout_sec)
+            grid = rospy.ServiceProxy('/static_map', GetMap)().map
+            actual = {
+                'width': int(grid.info.width),
+                'height': int(grid.info.height),
+                'resolution': float(grid.info.resolution),
+                'frame_id': grid.header.frame_id,
+            }
+            matched = (
+                actual['width'] == expected_width and
+                actual['height'] == expected_height and
+                abs(actual['resolution'] - expected_resolution) <= 1e-6 and
+                actual['frame_id'] == 'map'
+            )
+            return matched, actual
+        except Exception as exc:
+            return False, {'error': str(exc)}
+
     def switch_mode_fast(self, mode, map_file=None):
         if mode not in ('mapping', 'navigation'):
             raise ValueError('unsupported mode')
@@ -438,6 +488,13 @@ class EggyCommandCenter:
             self._launch_detached(
                 'rosrun map_server map_server ' + quoted_map,
                 '/tmp/eggy_mode_switch_mapserver.log')
+            map_ok, map_details = self._wait_map_matches(map_file, timeout_sec=6.0)
+            if not map_ok:
+                return False, {
+                    'mode': 'unknown',
+                    'map_ready': False,
+                    'map_details': map_details,
+                }
             self._launch_detached(
                 'roslaunch eggy_bringup amcl.launch scan_topic:=/scan odom_frame_id:=odom base_frame_id:=base_link map:=/map',
                 '/tmp/eggy_mode_switch_amcl.log')
@@ -489,7 +546,11 @@ class EggyCommandCenter:
         if profile not in ('mapping', 'navigation', 'inspection'):
             return self.make_response(req, False, '未知 profile，需要 mapping、navigation 或 inspection')
         if profile in ('navigation', 'inspection') and not map_file:
-            return self.make_response(req, False, '导航或巡检 profile 必须提供 params.map_file')
+            active_yaml = os.path.join(ACTIVE_MAP_LINK, 'map.yaml')
+            if os.path.isfile(active_yaml):
+                map_file = active_yaml
+            else:
+                return self.make_response(req, False, '尚未激活地图，请先从 Qt 顶部“打开地图”')
 
         args = ['--' + ('amcl' if profile == 'navigation' else profile)]
         if map_file:
@@ -512,18 +573,13 @@ class EggyCommandCenter:
         if not map_name or not yaml_b64 or not pgm_b64:
             return self.make_response(req, False, '缺少 map_name / yaml_b64 / pgm_b64')
 
-        safe_name = re.sub(r'[^A-Za-z0-9_\-.]', '_', os.path.basename(map_name))
-        if not safe_name:
-            return self.make_response(req, False, '地图名称无效')
-
-        dest_dir = f'/root/catkin_ws/maps/qt_selected/{safe_name}'
-        yaml_path = os.path.join(dest_dir, f'{safe_name}.yaml')
-        pgm_path = os.path.join(dest_dir, f'{safe_name}.pgm')
+        safe_name = map_name.lower()
+        if not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,47}', safe_name):
+            return self.make_response(req, False, '地图名称无效：仅允许小写字母、数字、下划线和短横线，最长 48 字符')
 
         try:
-            os.makedirs(dest_dir, exist_ok=True)
-            yaml_bytes = base64.b64decode(yaml_b64)
-            pgm_bytes = base64.b64decode(pgm_b64)
+            yaml_bytes = base64.b64decode(yaml_b64, validate=True)
+            pgm_bytes = base64.b64decode(pgm_b64, validate=True)
         except Exception as exc:
             return self.make_response(req, False, '地图文件解码失败', {'error': str(exc)})
 
@@ -532,37 +588,75 @@ class EggyCommandCenter:
         except Exception as exc:
             return self.make_response(req, False, 'YAML 解码为文本失败', {'error': str(exc)})
 
-        if not pgm_bytes[:2] == b'P5' and not pgm_bytes[:2] == b'P6':
+        if pgm_bytes[:2] not in (b'P5', b'P6'):
             return self.make_response(req, False, 'PGM 文件头校验失败，需要标准 PGM 文件')
 
+        digest = hashlib.sha256(yaml_bytes + b'\0' + pgm_bytes).hexdigest()
+        map_id = safe_name + '_' + digest[:8]
+        os.makedirs(MAP_LIBRARY_ROOT, exist_ok=True)
+        dest_dir = os.path.join(MAP_LIBRARY_ROOT, map_id)
+        yaml_path = os.path.join(dest_dir, 'map.yaml')
+        pgm_path = os.path.join(dest_dir, 'map.pgm')
+        staging_dir = tempfile.mkdtemp(prefix='.staging-', dir=MAP_LIBRARY_ROOT)
         try:
-            with open(yaml_path, 'w', encoding='utf-8') as f:
-                f.write(yaml_text)
-            with open(pgm_path, 'wb') as f:
+            parsed = yaml.safe_load(yaml_text) or {}
+            required = ('resolution', 'origin', 'negate', 'occupied_thresh', 'free_thresh')
+            missing = [key for key in required if key not in parsed]
+            if missing or not isinstance(parsed.get('origin'), list) or len(parsed['origin']) != 3:
+                raise ValueError('YAML 缺少必需字段或 origin 格式错误: ' + ','.join(missing))
+            parsed['image'] = './map.pgm'
+            stage_yaml = os.path.join(staging_dir, 'map.yaml')
+            stage_pgm = os.path.join(staging_dir, 'map.pgm')
+            with open(stage_yaml, 'w', encoding='utf-8') as f:
+                yaml.safe_dump(parsed, f, allow_unicode=True, sort_keys=False)
+                f.flush()
+                os.fsync(f.fileno())
+            with open(stage_pgm, 'wb') as f:
                 f.write(pgm_bytes)
+                f.flush()
+                os.fsync(f.fileno())
+            metadata = {
+                'schema_version': 1,
+                'map_id': map_id,
+                'display_name': safe_name,
+                'sha256': digest,
+                'created_at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+                'source': 'qt',
+            }
+            with open(os.path.join(staging_dir, 'metadata.json'), 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            if os.path.isdir(dest_dir):
+                shutil.rmtree(staging_dir)
+            else:
+                os.replace(staging_dir, dest_dir)
         except Exception as exc:
-            return self.make_response(req, False, '地图文件写入失败', {'error': str(exc)})
-
-        try:
-            with open(yaml_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            content = re.sub(r'(?m)^image\s*:\s*.*$', f'image: ./{safe_name}.pgm', content)
-            with open(yaml_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-        except Exception as exc:
-            return self.make_response(req, False, '修正 YAML image 路径失败', {'error': str(exc)})
+            shutil.rmtree(staging_dir, ignore_errors=True)
+            return self.make_response(req, False, '地图校验或原子写入失败', {'error': str(exc)})
 
         if not activate:
             return self.make_response(req, True, '地图已上传并保存', {
                 'yaml': yaml_path,
                 'pgm': pgm_path,
+                'map_id': map_id,
+                'sha256': digest,
             })
 
         try:
             ok, status = self.switch_mode_fast("navigation", map_file=yaml_path)
+            if ok:
+                temp_link = ACTIVE_MAP_LINK + '.tmp'
+                if os.path.lexists(temp_link):
+                    os.unlink(temp_link)
+                os.symlink(dest_dir, temp_link)
+                os.replace(temp_link, ACTIVE_MAP_LINK)
             return self.make_response(req, ok, '已上传地图并切到 AMCL 导航模式' if ok else '地图上传成功，但切换导航模式失败', {
                 'yaml': yaml_path,
                 'pgm': pgm_path,
+                'map_id': map_id,
+                'sha256': digest,
+                'map_ready': ok,
                 'status': status,
             })
         except Exception as exc:
