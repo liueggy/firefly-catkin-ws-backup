@@ -4,7 +4,8 @@ import rospy
 from geometry_msgs.msg import Twist
 
 rospy.init_node('safe_cmd_vel_stop', anonymous=True, disable_signals=True)
-pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+pub = rospy.Publisher(rospy.get_param('~cmd_vel_topic', '/cmd_vel/safety'),
+                      Twist, queue_size=10)
 # give publisher a short moment; don't wait forever for subscribers
 end = time.time() + 0.8
 msg = Twist()

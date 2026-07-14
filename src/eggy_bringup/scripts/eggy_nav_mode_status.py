@@ -16,6 +16,7 @@ import time
 import rosnode
 import rospy
 from std_msgs.msg import String
+from profile_contract import build_profile_contract
 
 
 def _as_bool(value):
@@ -44,6 +45,7 @@ class EggyNavModeStatus(object):
         self.use_mapping = _as_bool(rospy.get_param("~use_mapping", True))
         self.use_amcl = _as_bool(rospy.get_param("~use_amcl", False))
         self.use_navigation = _as_bool(rospy.get_param("~use_navigation", True))
+        self.profile = str(rospy.get_param("~profile", "mapping")).strip().lower()
         self.map_file = rospy.get_param(
             "~map_file", "/root/catkin_ws/maps/navigation/latest.yaml"
         )
@@ -67,96 +69,39 @@ class EggyNavModeStatus(object):
         meter_running = _node_present(nodes, "/meter_rknn_detect_cpp")
         kimi_server_running = _http_service_present("127.0.0.1", 8000)
         kimi_bridge_running = _node_present(nodes, "/kimi_inspection_bridge")
-        inspection_running = runner_running or meter_running or kimi_server_running or kimi_bridge_running
+        camera_running = _node_present(nodes, "/eggy_camera")
 
         conflict = (
             (self.use_amcl and self.use_mapping)
             or (amcl_running and gmapping_running)
         )
 
-        if inspection_running and (amcl_running or self.use_amcl):
-            mode = "inspection"
-            localizer = "amcl"
-            initialpose_supported = True
-        elif amcl_running or self.use_amcl:
-            mode = "navigation"
-            localizer = "amcl"
-            initialpose_supported = True
-        elif gmapping_running or self.use_mapping:
-            mode = "mapping"
-            localizer = "gmapping"
-            initialpose_supported = False
-        else:
-            mode = "unknown"
-            localizer = "none"
-            initialpose_supported = False
-
-        if conflict:
-            state = "conflict"
-            message = "AMCL 与 gmapping 同时启用，map->odom 可能冲突。"
-        elif mode == "inspection":
-            state = "ok" if move_base_running and runner_running else "starting"
-            message = "巡检模式，AMCL 导航与识别/巡检节点已纳入统一状态。"
-        elif mode == "navigation":
-            state = "ok" if move_base_running else "starting"
-            message = "静态地图 + AMCL 导航模式，Qt 重定位会发布 /initialpose。"
-        elif mode == "mapping":
-            state = "ok" if gmapping_running else "starting"
-            message = "建图模式，雷达与边界对齐由 gmapping scan matching 完成。"
-        else:
-            state = "unknown"
-            message = "未识别到定位模式。"
-
-        task_chain_ready = (
-            self.use_navigation
-            and move_base_running
-            and runner_running
-            and not conflict
-        )
-
-        capabilities = {
-            "initialpose": initialpose_supported and not conflict,
-            "mapping": bool(gmapping_running or self.use_mapping),
-            "navigation": bool(move_base_running and (amcl_running or self.use_amcl)),
-            "inspection": bool(inspection_running and move_base_running),
-            "camera": _node_present(nodes, "/eggy_camera"),
-            "meter_detection": meter_running,
-            "profile_switch": True,
-            "profiles": {
-                "mapping": True,
-                "navigation": os.path.isfile(self.map_file),
-                "inspection": os.path.isfile(self.map_file),
-            },
+        observed = {
+            "amcl": amcl_running, "gmapping": gmapping_running,
+            "move_base": move_base_running, "map_server": map_server_running,
+            "rosbridge": rosbridge_running, "mission_runner": runner_running,
+            "camera": camera_running, "meter_detection": meter_running,
+            "kimi_server": kimi_server_running, "kimi_bridge": kimi_bridge_running,
         }
-
-        return {
+        status = build_profile_contract(
+            self.profile, observed, map_available=os.path.isfile(self.map_file))
+        if conflict:
+            status["state"] = "degraded"
+            status["message"] = "AMCL 与 gmapping 同时启用，map->odom 可能冲突。"
+        else:
+            status["message"] = "profile 来自启动配置；节点仅用于 ready/degraded 健康判定。"
+        status.update({
             "stamp": time.time(),
-            "mode": mode,
-            "profile": mode,
-            "state": state,
-            "localizer": localizer,
             "map_file": self.map_file,
             "configured": {
                 "use_mapping": self.use_mapping,
                 "use_amcl": self.use_amcl,
                 "use_navigation": self.use_navigation,
             },
-            "observed": {
-                "amcl": amcl_running,
-                "gmapping": gmapping_running,
-                "move_base": move_base_running,
-                "map_server": map_server_running,
-                "rosbridge": rosbridge_running,
-                "inspection_runner": runner_running,
-                "meter_detection": meter_running,
-                "kimi_server": kimi_server_running,
-                "kimi_bridge": kimi_bridge_running,
-            },
-            "initialpose_supported": initialpose_supported and not conflict,
-            "task_chain_ready": task_chain_ready,
-            "capabilities": capabilities,
-            "message": message,
-        }
+            "initialpose_supported": status["capabilities"]["initialpose"] and not conflict,
+            "task_chain_ready": status["state"] == "ready" and self.profile != "mapping",
+        })
+        return status
 
     def spin(self):
         rate = rospy.Rate(self.rate_hz)

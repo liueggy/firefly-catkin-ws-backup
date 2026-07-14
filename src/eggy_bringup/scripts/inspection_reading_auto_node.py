@@ -50,7 +50,8 @@ class AutoMeterKimiReader:
         self.command_response_pub = rospy.Publisher(
             "/eggy/command/response", String, queue_size=10, latch=True
         )
-        self.cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=1)
+        self.cmd_pub = rospy.Publisher(
+            rospy.get_param("~cmd_vel_topic", "/cmd_vel/mission"), Twist, queue_size=1)
 
         rospy.Subscriber(
             self.image_topic, CompressedImage, self.on_image, queue_size=1, buff_size=2**24

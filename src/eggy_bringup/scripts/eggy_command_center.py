@@ -130,10 +130,22 @@ class EggyCommandCenter:
         self.pub_response = rospy.Publisher('/eggy/command/response', String, queue_size=20)
         self.pub_status = rospy.Publisher('/eggy/command/status', String, queue_size=1, latch=True)
         self.sub_request = rospy.Subscriber('/eggy/command/request', String, self.on_request, queue_size=10)
+        self.profile_status = {}
+        self.sub_profile = rospy.Subscriber(
+            '/eggy/nav_mode/status', String, self.on_profile_status, queue_size=1)
         self.status_rate = float(rospy.get_param('~status_rate', 1.0))
         self.allow_shell = bool(rospy.get_param('~allow_shell', False))
         self.last_status = {}
         rospy.loginfo('eggy_command_center started: request=/eggy/command/request response=/eggy/command/response status=/eggy/command/status')
+
+    def on_profile_status(self, msg):
+        try:
+            status = json.loads(msg.data)
+            if (isinstance(status, dict) and
+                    status.get('profile') in ('mapping', 'navigation', 'inspection')):
+                self.profile_status = status
+        except (TypeError, ValueError):
+            rospy.logwarn_throttle(10.0, 'invalid authoritative profile status ignored')
 
     def now(self):
         return rospy.Time.now().to_sec()
@@ -165,19 +177,10 @@ class EggyCommandCenter:
             'has_publisher': bool(pub_map.get(name, [])),
         } for name in KEY_TOPICS}
 
-        inspection_nodes = ('/meter_rknn_detect_cpp', '/kimi_inspection_server',
-                            '/kimi_inspection_bridge', '/inspection_servo_route_runner')
-        inspection_active = any(node_state.get(name, False) for name in inspection_nodes)
-        if inspection_active and node_state.get('/amcl'):
-            mode = 'inspection'
-        elif node_state.get('/slam_gmapping') and not node_state.get('/amcl') and not node_state.get('/map_server'):
-            mode = 'mapping_slam'
-        elif node_state.get('/amcl') and node_state.get('/map_server'):
-            mode = 'static_nav'
-        elif node_state.get('/amcl') and topic_state.get('/map', {}).get('has_publisher'):
-            mode = 'static_nav'
-        else:
-            mode = 'unknown'
+        authority = dict(self.profile_status)
+        mode = authority.get('mode', 'unknown')
+        profile = authority.get('profile', 'unknown')
+        profile_state = authority.get('state', 'degraded')
 
         load1, load5, load15 = os.getloadavg()
         camera_pid_code, camera_pid = run_cmd("pgrep -f '[e]ggy_camera_node.py' | head -1", timeout=2)
@@ -192,22 +195,13 @@ class EggyCommandCenter:
         except Exception:
             active_map = {}
 
-        profile = {
-            'mapping_slam': 'mapping',
-            'static_nav': 'navigation',
-            'inspection': 'inspection',
-        }.get(mode, 'unknown')
-        profile_available = {
-            'mapping': True,
-            'navigation': bool(active_map),
-            'inspection': bool(active_map),
-        }
+        capabilities = authority.get('capabilities', {})
 
         return {
             'stamp': self.now(),
             'mode': mode,
             'profile': profile,
-            'state': 'ready' if profile != 'unknown' else 'degraded',
+            'state': profile_state,
             'loadavg': [round(load1, 2), round(load5, 2), round(load15, 2)],
             'nodes': node_state,
             'topics': topic_state,
@@ -217,16 +211,8 @@ class EggyCommandCenter:
                 'v4l2_pid': v4l2_pid if v4l2_code == 0 else '',
             },
             'active_map': active_map,
-            'capabilities': {
-                'initialpose': mode in ('static_nav', 'inspection'),
-                'mapping': mode == 'mapping_slam',
-                'navigation': mode in ('static_nav', 'inspection'),
-                'inspection': mode == 'inspection',
-                'camera': node_state.get('/eggy_camera', False),
-                'meter_detection': node_state.get('/meter_rknn_detect_cpp', False),
-                'profile_switch': True,
-                'profiles': profile_available,
-            },
+            'capabilities': capabilities,
+            'profile_authority': '/eggy/nav_mode/status',
         }
 
     def wait_node_state(self, node_name, should_exist=True, timeout_sec=10.0):

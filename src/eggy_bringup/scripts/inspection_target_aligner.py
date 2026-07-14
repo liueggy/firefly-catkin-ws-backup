@@ -37,7 +37,7 @@ def clamp(value, lo, hi):
 class InspectionTargetAligner:
     def __init__(self):
         self.detection_topic = rospy.get_param("~detection_topic", "/meter/detection")
-        self.cmd_vel_topic = rospy.get_param("~cmd_vel_topic", "/cmd_vel")
+        self.cmd_vel_topic = rospy.get_param("~cmd_vel_topic", "/cmd_vel/mission")
         self.center_tolerance_px = float(rospy.get_param("~center_tolerance_px", 35.0))
         self.size_tolerance_ratio = float(rospy.get_param("~size_tolerance_ratio", 0.18))
         self.search_timeout = float(rospy.get_param("~search_timeout", 20.0))

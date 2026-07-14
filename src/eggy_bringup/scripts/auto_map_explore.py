@@ -72,7 +72,8 @@ class FastAutoMapper:
         self.frontier_min_cells = int(rospy.get_param("~frontier_min_cells", 18))
         self.min_known_cells = int(rospy.get_param("~min_known_cells", 800))
 
-        self.cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=5)
+        self.cmd_pub = rospy.Publisher(
+            rospy.get_param("~cmd_vel_topic", "/cmd_vel/manual"), Twist, queue_size=5)
         self.status_pub = rospy.Publisher("/auto_explore/status", String, queue_size=10, latch=True)
         rospy.Subscriber("/scan", LaserScan, self.scan_cb, queue_size=1)
         rospy.Subscriber("/map", OccupancyGrid, self.map_cb, queue_size=1)

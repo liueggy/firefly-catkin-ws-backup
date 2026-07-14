@@ -44,7 +44,8 @@ class ForwardDistanceController:
         self.lock = threading.Lock()
         
         # 发布器
-        self.cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+        self.cmd_vel_pub = rospy.Publisher(
+            rospy.get_param('~cmd_vel_topic', '/cmd_vel/manual'), Twist, queue_size=10)
         
         # 订阅器
         rospy.Subscriber('/odom', Odometry, self.odom_callback)

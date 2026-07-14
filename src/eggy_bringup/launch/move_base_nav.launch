@@ -43,7 +43,7 @@ rotate_recovery:
   frequency: 10.0
     </rosparam>
 
-    <remap from="cmd_vel" to="/cmd_vel" />
+    <remap from="cmd_vel" to="/cmd_vel/navigation" />
     <remap from="move_base_simple/goal" to="/nav_goal" />
   </node>
 </launch>

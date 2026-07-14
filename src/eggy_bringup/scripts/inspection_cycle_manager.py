@@ -101,7 +101,8 @@ class InspectionCycleManager:
         self.scan_capture_pub = rospy.Publisher("/inspection_scan/capture", String, queue_size=50)
         self.reading_request_pub = rospy.Publisher("/inspection_reading/request", String, queue_size=10)
         self.align_request_pub = rospy.Publisher("/inspection_align/request", String, queue_size=10)
-        self.cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
+        self.cmd_pub = rospy.Publisher(
+            rospy.get_param("~cmd_vel_topic", "/cmd_vel/mission"), Twist, queue_size=10)
 
         rospy.Subscriber("/inspection_cycle/request", String, self.on_request, queue_size=5)
         rospy.Subscriber("/inspection_route/request", String, self.on_request, queue_size=5)

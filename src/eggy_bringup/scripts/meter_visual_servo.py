@@ -71,7 +71,8 @@ class MeterVisualServo:
         self.last_state = ""
         self.search_started_time = time.time() if self.enabled else 0.0
 
-        self.cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
+        self.cmd_pub = rospy.Publisher(
+            rospy.get_param("~cmd_vel_topic", "/cmd_vel/mission"), Twist, queue_size=10)
         self.status_pub = rospy.Publisher("/meter_visual_servo/status", String, queue_size=1, latch=True)
         rospy.Subscriber(self.detection_topic, String, self.on_detection, queue_size=1)
         rospy.Subscriber(self.scan_topic, LaserScan, self.on_scan, queue_size=1)

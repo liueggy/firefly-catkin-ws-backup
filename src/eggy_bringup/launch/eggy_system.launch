@@ -13,6 +13,9 @@
   <arg name="use_simple_nav" default="false" />
   <arg name="use_navigation" default="true" />
   <arg name="use_qt5_adapter" default="true" />
+  <arg name="profile" default="mapping" />
+  <arg name="legacy_qt_visual_relays" default="false" />
+  <arg name="legacy_qt_camera_relay" default="false" />
   <arg name="use_camera" default="true" />
   <arg name="camera_device" default="/dev/orbbec_rgb23" />
   <arg name="camera_fps" default="10" />
@@ -142,8 +145,14 @@
   </group>
 
   <group if="$(arg use_qt5_adapter)">
-    <node pkg="eggy_bringup" type="ros_qt5_gui_adapter.py" name="ros_qt5_gui_adapter" output="screen" />
+    <node pkg="eggy_bringup" type="ros_qt5_gui_adapter.py" name="ros_qt5_gui_adapter" output="screen">
+      <param name="legacy_visual_relays" value="$(arg legacy_qt_visual_relays)" />
+    </node>
   </group>
+
+  <!-- Base driver remains on /cmd_vel; all primary producers use leased inputs. -->
+  <!-- Single authoritative base-velocity owner. All producers publish to typed inputs. -->
+  <node pkg="eggy_bringup" type="cmd_vel_arbiter.py" name="eggy_cmd_vel_arbiter" output="screen" />
 
   <!-- DISABLED 2026-06-01 (Eggy): Qt 客户端经 rosbridge 未订阅 /eggy_nav/status，关闭省内存/CPU
   <node pkg="eggy_bringup" type="eggy_nav_monitor.py" name="eggy_nav_monitor" output="screen">
@@ -176,6 +185,15 @@
       <param name="frame_skip" value="$(arg meter_frame_skip)" />
     </node>
   </group>
+  <!-- Compatibility only: current Qt subscribes to the stable raw source directly. -->
+  <group if="$(arg use_camera)">
+    <group if="$(arg legacy_qt_camera_relay)">
+      <group unless="$(arg use_meter_rknn)">
+        <node pkg="topic_tools" type="relay" name="eggy_camera_raw_to_qt"
+              args="/camera/front/image_source/compressed /camera/front/image/compressed" />
+      </group>
+    </group>
+  </group>
 
   <group if="$(arg use_kimi_server)">
     <node pkg="eggy_bringup" type="kimi_inspection_server.py" name="kimi_inspection_server" output="screen" respawn="true" respawn_delay="3.0">
@@ -200,6 +218,7 @@
       <param name="base_frame" value="base_link" />
       <param name="move_base_timeout" value="$(arg inspection_move_base_timeout)" />
       <param name="inspection_capable" value="$(arg mission_inspection_capable)" />
+      <param name="cmd_vel_topic" value="/cmd_vel/mission" />
       <param name="enable_kimi_after_search" value="$(arg inspection_enable_kimi_after_search)" />
       <param name="search_timeout" value="$(arg inspection_search_timeout)" />
       <param name="search_min_score" value="$(arg inspection_search_min_score)" />
@@ -231,6 +250,7 @@
   <group if="$(arg use_nav_mode_status)">
     <node pkg="eggy_bringup" type="eggy_nav_mode_status.py" name="eggy_nav_mode_status" output="screen">
       <param name="rate" value="1.0" />
+      <param name="profile" value="$(arg profile)" />
       <param name="use_mapping" value="$(arg use_mapping)" />
       <param name="use_amcl" value="$(arg use_amcl)" />
       <param name="use_navigation" value="$(arg use_navigation)" />

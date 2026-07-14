@@ -90,7 +90,8 @@ class InspectionServoRouteRunner:
         self.result_pub = rospy.Publisher("/eggy/mission/result", String, queue_size=10, latch=True)
         self.legacy_status_pub = rospy.Publisher("/inspection_servo_route/status", String, queue_size=10, latch=True)
         self.legacy_result_pub = rospy.Publisher("/inspection_servo_route/result", String, queue_size=10, latch=True)
-        self.cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
+        self.cmd_vel_topic = rospy.get_param("~cmd_vel_topic", "/cmd_vel/mission")
+        self.cmd_pub = rospy.Publisher(self.cmd_vel_topic, Twist, queue_size=10)
         self.kimi_request_pub = rospy.Publisher("/kimi_inspection/request", String, queue_size=5)
 
         rospy.Subscriber("/eggy/mission/request", String, self.on_request, queue_size=5)

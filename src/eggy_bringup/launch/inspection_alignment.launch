@@ -2,7 +2,7 @@
   <arg name="start_route_runner" default="true" />
   <arg name="route_file" default="$(find eggy_bringup)/config/inspection_route.json" />
   <arg name="detection_topic" default="/meter/detection" />
-  <arg name="cmd_vel_topic" default="/cmd_vel" />
+  <arg name="cmd_vel_topic" default="/cmd_vel/mission" />
   <arg name="dry_run" default="false" />
 
   <node pkg="eggy_bringup" type="inspection_target_aligner.py" name="inspection_target_aligner" output="screen">

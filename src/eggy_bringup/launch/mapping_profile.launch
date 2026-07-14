@@ -1,6 +1,7 @@
 <launch>
   <!-- 轻量建图配置：保留底盘、雷达、里程计融合和 gmapping，关闭巡检视觉链路。 -->
   <include file="$(find eggy_bringup)/launch/eggy_system.launch">
+    <arg name="profile" value="mapping" />
     <arg name="use_mapping" value="true" />
     <arg name="use_amcl" value="false" />
     <arg name="use_navigation" value="true" />

@@ -746,7 +746,8 @@ def main():
     global cmd_pub, map_pub, tf_listener
     rospy.init_node("eggy_robot_agent", anonymous=False, disable_signals=True)
     tf_listener = tf.TransformListener()
-    cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=3)
+    cmd_pub = rospy.Publisher(
+        rospy.get_param("~cmd_vel_topic", "/cmd_vel/manual"), Twist, queue_size=3)
     map_pub = rospy.Publisher("/eggy/map_override", OccupancyGrid, queue_size=1, latch=True)
     global goal_pub
     goal_pub = rospy.Publisher("/move_base_simple/goal", PoseStamped, queue_size=1)

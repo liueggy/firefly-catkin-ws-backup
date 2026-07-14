@@ -1,7 +1,7 @@
 <launch>
   <arg name="route_file" default="$(find eggy_bringup)/config/inspection_route.json" />
   <arg name="detection_topic" default="/meter/detection" />
-  <arg name="cmd_vel_topic" default="/cmd_vel" />
+  <arg name="cmd_vel_topic" default="/cmd_vel/mission" />
   <arg name="image_topic" default="/camera/front/image/compressed" />
   <arg name="dry_run" default="true" />
 

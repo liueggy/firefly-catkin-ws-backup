@@ -8,7 +8,8 @@ class ImuRotator:
     def __init__(self):
         self.gz = None
         self.last_stamp = None
-        self.pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+        self.pub = rospy.Publisher(
+            rospy.get_param('~cmd_vel_topic', '/cmd_vel/manual'), Twist, queue_size=10)
         self.sub = rospy.Subscriber('/external_imu/imu/data_raw', Imu, self.cb, queue_size=200)
 
     def cb(self, msg):

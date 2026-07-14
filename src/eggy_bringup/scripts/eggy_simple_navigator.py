@@ -158,7 +158,7 @@ def main():
     global goal, cancelled, last_twist
     rospy.init_node("eggy_simple_navigator")
     listener = tf.TransformListener()
-    cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=1)
+    cmd_pub = rospy.Publisher(rospy.get_param("~cmd_vel_topic", "/cmd_vel/navigation"), Twist, queue_size=1)
     state_pub = rospy.Publisher("/simple_nav/status", String, queue_size=10, latch=True)
     rospy.Subscriber("/odom", Odometry, odom_cb, queue_size=5)
     rospy.Subscriber("/scan", LaserScan, scan_cb, queue_size=3)

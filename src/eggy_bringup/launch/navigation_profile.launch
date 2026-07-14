@@ -3,6 +3,7 @@
   <arg name="map_file" default="/root/catkin_ws/maps/navigation/latest.yaml" />
 
   <include file="$(find eggy_bringup)/launch/eggy_system.launch">
+    <arg name="profile" value="navigation" />
     <arg name="use_mapping" value="false" />
     <arg name="use_amcl" value="true" />
     <arg name="map_file" value="$(arg map_file)" />

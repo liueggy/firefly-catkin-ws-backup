@@ -13,17 +13,24 @@ from mission_protocol import build_goal_pose_mission
 class RosQt5GuiAdapter:
     def __init__(self):
         self.voltage = None
+        self.legacy_visual_relays = bool(rospy.get_param(
+            '~legacy_visual_relays', False))
         self.battery_pub = rospy.Publisher('/battery', BatteryState, queue_size=1, latch=True)
         self.mission_request_pub = rospy.Publisher(
             '/eggy/mission/request', String, queue_size=5)
+
+        rospy.Subscriber('/goal_pose', PoseStamped, self.on_goal, queue_size=1)
+        rospy.Subscriber('/battery/voltage', Float32, self.on_voltage, queue_size=1)
+        if self.legacy_visual_relays:
+            self._start_legacy_visual_relays()
+
+    def _start_legacy_visual_relays(self):
+        rospy.logwarn('legacy Qt plan/costmap relays are enabled for migration only')
         self.plan_pub = rospy.Publisher('/plan', Path, queue_size=1, latch=True)
         self.local_plan_pub = rospy.Publisher('/local_plan', Path, queue_size=1, latch=True)
         self.global_costmap_pub = rospy.Publisher('/global_costmap/costmap', OccupancyGrid, queue_size=1, latch=True)
         self.local_costmap_pub = rospy.Publisher('/local_costmap/costmap', OccupancyGrid, queue_size=1, latch=True)
         self.footprint_pub = rospy.Publisher('/local_costmap/published_footprint', PolygonStamped, queue_size=1, latch=True)
-
-        rospy.Subscriber('/goal_pose', PoseStamped, self.on_goal, queue_size=1)
-        rospy.Subscriber('/battery/voltage', Float32, self.on_voltage, queue_size=1)
         rospy.Subscriber('/move_base/NavfnROS/plan', Path, self.plan_pub.publish, queue_size=1)
         rospy.Subscriber('/move_base/TebLocalPlannerROS/global_plan', Path, self.plan_pub.publish, queue_size=1)
         rospy.Subscriber('/move_base/TebLocalPlannerROS/local_plan', Path, self.local_plan_pub.publish, queue_size=1)
@@ -32,6 +39,8 @@ class RosQt5GuiAdapter:
         rospy.Subscriber('/move_base/local_costmap/footprint', PolygonStamped, self.footprint_pub.publish, queue_size=1)
 
     def on_goal(self, msg):
+        rospy.logwarn_throttle(
+            30.0, '/goal_pose is deprecated; publish /eggy/mission/request instead')
         yaw = tf.transformations.euler_from_quaternion([
             msg.pose.orientation.x,
             msg.pose.orientation.y,
@@ -62,5 +71,5 @@ class RosQt5GuiAdapter:
 if __name__ == '__main__':
     rospy.init_node('ros_qt5_gui_adapter')
     RosQt5GuiAdapter()
-    rospy.loginfo('ros_qt5_gui_adapter started: /goal_pose bridge enabled')
+    rospy.loginfo('ros_qt5_gui_adapter started: deprecated /goal_pose bridge enabled; primary API=/eggy/mission/request')
     rospy.spin()

@@ -44,7 +44,8 @@ class PipePatrolController:
         self.busy = False
         self.last_meter_stamp = 0.0
 
-        self.cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
+        self.cmd_pub = rospy.Publisher(
+            rospy.get_param("~cmd_vel_topic", "/cmd_vel/mission"), Twist, queue_size=10)
         self.status_pub = rospy.Publisher("/pipe_patrol/status", String, queue_size=1, latch=True)
         self.result_pub = rospy.Publisher("/pipe_patrol/result", String, queue_size=20, latch=True)
         self.command_response_pub = rospy.Publisher("/eggy/command/response", String, queue_size=20, latch=True)

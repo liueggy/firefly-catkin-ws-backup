@@ -18,7 +18,7 @@ class VoiceController:
         self.rot_dur = rospy.get_param("~rotate_duration", 1.5)
         self.spn_dur = rospy.get_param("~spin_duration", 1.5)
 
-        self.cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=1)
+        self.cmd_pub = rospy.Publisher(rospy.get_param("~cmd_vel_topic", "/cmd_vel/manual"), Twist, queue_size=1)
         self.stat_pub = rospy.Publisher("/eggy/voice/status", String, queue_size=5)
         rospy.Subscriber("/stm32/voice_command", String, self.on_voice, queue_size=10)
 
