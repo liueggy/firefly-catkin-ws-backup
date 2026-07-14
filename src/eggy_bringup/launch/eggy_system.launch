@@ -29,6 +29,7 @@
   <arg name="use_kimi_bridge" default="true" />
   <arg name="kimi_api_base" default="http://127.0.0.1:8000" />
   <arg name="use_inspection_servo_route" default="true" />
+  <arg name="mission_inspection_capable" default="true" />
   <arg name="inspection_dry_run" default="false" />
   <arg name="inspection_enable_kimi_after_search" default="true" />
   <arg name="inspection_move_base_timeout" default="120" />
@@ -141,11 +142,7 @@
   </group>
 
   <group if="$(arg use_qt5_adapter)">
-    <node pkg="eggy_bringup" type="ros_qt5_gui_adapter.py" name="ros_qt5_gui_adapter" output="screen">
-      <param name="single_goal_inspection_enabled" value="true" />
-      <param name="single_goal_return_home" value="false" />
-      <param name="single_goal_expected_class" value="any" />
-    </node>
+    <node pkg="eggy_bringup" type="ros_qt5_gui_adapter.py" name="ros_qt5_gui_adapter" output="screen" />
   </group>
 
   <!-- DISABLED 2026-06-01 (Eggy): Qt 客户端经 rosbridge 未订阅 /eggy_nav/status，关闭省内存/CPU
@@ -195,13 +192,14 @@
     </node>
   </group>
 
-  <!-- Qt task-chain runner: /inspection_servo_route/request -> navigate -> search target -> Kimi. -->
+  <!-- Sole mission motion owner: /eggy/mission/request -> move_base, with optional inspection. -->
   <group if="$(arg use_inspection_servo_route)">
     <node pkg="eggy_bringup" type="inspection_servo_route_runner.py" name="inspection_servo_route_runner" output="screen" respawn="true" respawn_delay="3.0">
       <param name="dry_run" value="$(arg inspection_dry_run)" />
       <param name="default_frame" value="map" />
       <param name="base_frame" value="base_link" />
       <param name="move_base_timeout" value="$(arg inspection_move_base_timeout)" />
+      <param name="inspection_capable" value="$(arg mission_inspection_capable)" />
       <param name="enable_kimi_after_search" value="$(arg inspection_enable_kimi_after_search)" />
       <param name="search_timeout" value="$(arg inspection_search_timeout)" />
       <param name="search_min_score" value="$(arg inspection_search_min_score)" />

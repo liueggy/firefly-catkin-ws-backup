@@ -10,6 +10,7 @@
   <arg name="enable_kimi_after_servo" default="true" />
   <arg name="kimi_timeout" default="90" />
   <arg name="kimi_task" default="meter" />
+  <arg name="inspection_capable" default="true" />
 
   <node pkg="eggy_bringup" type="inspection_servo_route_runner.py" name="inspection_servo_route_runner" output="screen">
     <param name="route_file" value="$(arg route_file)" />
@@ -23,5 +24,6 @@
     <param name="enable_kimi_after_servo" value="$(arg enable_kimi_after_servo)" />
     <param name="kimi_timeout" value="$(arg kimi_timeout)" />
     <param name="kimi_task" value="$(arg kimi_task)" />
+    <param name="inspection_capable" value="$(arg inspection_capable)" />
   </node>
 </launch>

@@ -1,12 +1,8 @@
 <launch>
   <!-- Ros_Qt5_Gui_App compatibility adapter.
-       - /goal_pose -> /move_base_simple/goal
+       - /goal_pose -> /eggy/mission/request (plain navigation, inspection disabled)
        - move_base path/costmap/footprint topics -> software default aliases
        - /battery/voltage Float32 -> /battery BatteryState
   -->
-  <node pkg="eggy_bringup" type="ros_qt5_gui_adapter.py" name="ros_qt5_gui_adapter" output="screen">
-    <param name="single_goal_inspection_enabled" value="true" />
-    <param name="single_goal_return_home" value="false" />
-    <param name="single_goal_expected_class" value="any" />
-  </node>
+  <node pkg="eggy_bringup" type="ros_qt5_gui_adapter.py" name="ros_qt5_gui_adapter" output="screen" />
 </launch>

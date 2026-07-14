@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Route runner that navigates to each waypoint, searches target, then calls Kimi.
+"""Unified mission runner for plain navigation and opt-in inspection routes.
 
-This node is intentionally narrow: it does not change move_base or Qt's
-existing single-goal bridge. It only sequences navigation, target search, and
-Kimi analysis.
+The runner owns one mission at a time, reports identity-rich feedback, and
+keeps camera search and Kimi analysis dormant unless inspection is explicitly
+enabled by the request and supported by the active launch profile.
 """
 
 import json
+import itertools
 import math
 import threading
 import time
@@ -20,6 +21,8 @@ from geometry_msgs.msg import PoseStamped, Quaternion, Twist
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from std_msgs.msg import String
 import tf
+
+from mission_protocol import normalize_mission_request
 
 
 GOAL_STATUS_TEXT = {
@@ -66,6 +69,7 @@ class InspectionServoRouteRunner:
         self.search_step_pause_sec = float(rospy.get_param("~search_step_pause_sec", 1.0))
         self.search_settle_sec = float(rospy.get_param("~search_settle_sec", 2.5))
         self.dry_run = bool(rospy.get_param("~dry_run", False))
+        self.inspection_capable = bool(rospy.get_param("~inspection_capable", True))
 
         self.lock = threading.Lock()
         self.busy = False
@@ -77,13 +81,20 @@ class InspectionServoRouteRunner:
         self.detection_candidate = None
         self.detection_stable_count = 0
         self.last_detection_class = ""
+        self.current_mission = {}
+        self.current_point_index = None
+        self.current_point_id = None
+        self.seen_request_ids = set()
 
-        self.status_pub = rospy.Publisher("/inspection_servo_route/status", String, queue_size=10, latch=True)
-        self.result_pub = rospy.Publisher("/inspection_servo_route/result", String, queue_size=10, latch=True)
+        self.status_pub = rospy.Publisher("/eggy/mission/status", String, queue_size=10, latch=True)
+        self.result_pub = rospy.Publisher("/eggy/mission/result", String, queue_size=10, latch=True)
+        self.legacy_status_pub = rospy.Publisher("/inspection_servo_route/status", String, queue_size=10, latch=True)
+        self.legacy_result_pub = rospy.Publisher("/inspection_servo_route/result", String, queue_size=10, latch=True)
         self.cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
         self.kimi_request_pub = rospy.Publisher("/kimi_inspection/request", String, queue_size=5)
 
-        rospy.Subscriber("/inspection_servo_route/request", String, self.on_request, queue_size=5)
+        rospy.Subscriber("/eggy/mission/request", String, self.on_request, queue_size=5)
+        rospy.Subscriber("/inspection_servo_route/request", String, self.on_legacy_request, queue_size=5)
         rospy.Subscriber("/kimi_inspection/result", String, self.on_kimi_result, queue_size=10)
         rospy.Subscriber("/meter/detection", String, self.on_detection, queue_size=10)
 
@@ -111,6 +122,8 @@ class InspectionServoRouteRunner:
 
         with self.lock:
             if not (self.navigation_active or self.search_active):
+                return
+            if not self.current_mission.get("inspection", {}).get("enabled", False):
                 return
             expected = self.expected_class
 
@@ -152,20 +165,53 @@ class InspectionServoRouteRunner:
             }
 
     def on_request(self, msg):
-        payload = self.parse_payload(msg.data)
-        command = str(payload.get("command", "start")).lower()
+        self.handle_request(msg, legacy_inspection=False)
+
+    def on_legacy_request(self, msg):
+        rospy.logwarn("/inspection_servo_route/request is deprecated; use /eggy/mission/request")
+        self.handle_request(msg, legacy_inspection=True)
+
+    def handle_request(self, msg, legacy_inspection=False):
+        raw = {}
+        try:
+            raw = self.parse_payload(msg.data)
+            payload = normalize_mission_request(
+                raw, self.default_frame, legacy_inspection=legacy_inspection)
+        except Exception as exc:
+            self.publish_status("bad_request", str(exc), {}, mission=raw)
+            return
+        command = payload["command"]
         if command in ("stop", "cancel"):
+            active_id = self.current_mission.get("request_id")
+            if not self.busy or payload["request_id"] != active_id:
+                self.publish_status(
+                    "cancel_ignored", "cancel request does not match active mission",
+                    {}, mission=payload)
+                return
             self.cancel_requested = True
-            self.client.cancel_all_goals()
+            self.client.cancel_goal()
             self.stop_robot()
-            self.publish_status("cancelled", "route cancel requested", {})
+            self.publish_status("cancelling", "mission cancel requested", {})
+            return
+        if payload["inspection"]["enabled"] and not self.inspection_capable:
+            self.publish_status(
+                "rejected", "inspection capability is disabled in this launch profile",
+                {}, mission=payload)
             return
         with self.lock:
+            if payload["request_id"] in self.seen_request_ids:
+                self.publish_status("rejected", "duplicate request_id", {}, mission=payload)
+                return
             if self.busy:
-                self.publish_status("busy", "inspection servo route already running", {})
+                self.publish_status("busy", "another mission already owns motion", {}, mission=payload)
                 return
             self.busy = True
             self.cancel_requested = False
+            self.current_mission = payload
+            if len(self.seen_request_ids) >= 512:
+                self.seen_request_ids.pop()
+            self.seen_request_ids.add(payload["request_id"])
+        self.publish_status("accepted", "mission accepted", {}, mission=payload)
         threading.Thread(target=self.run_route, args=(payload,), daemon=True).start()
 
     def parse_payload(self, text):
@@ -175,8 +221,9 @@ class InspectionServoRouteRunner:
                 data = json.loads(text)
                 if isinstance(data, dict):
                     return data
+                raise ValueError("mission JSON root must be an object")
             except Exception as exc:
-                self.publish_status("bad_request", str(exc), {"raw": text})
+                raise ValueError("invalid mission JSON: %s" % exc)
         return {"route": self.load_route_file()}
 
     def load_route_file(self):
@@ -191,7 +238,7 @@ class InspectionServoRouteRunner:
             return []
 
     def normalize_waypoints(self, payload):
-        route = payload.get("route") or payload.get("waypoints") or []
+        route = payload["route"]
         out = []
         for i, wp in enumerate(route):
             if not isinstance(wp, dict):
@@ -258,17 +305,32 @@ class InspectionServoRouteRunner:
         ok = False
         state = "error"
         message = ""
+        current_index = None
+        current_wp = None
+        def store_point_result(index, point):
+            if payload["loop"] and index < len(results):
+                results[index] = point
+            else:
+                results.append(point)
         try:
             waypoints = self.normalize_waypoints(payload)
             if not waypoints:
                 raise RuntimeError("empty route; publish JSON with route:[{id,x,y,yaw}]")
-            home = self.current_pose_waypoint()
-            self.publish_status("home_recorded", "current pose recorded as home", {"home": home})
+            home = None
+            if payload["return_home"]:
+                home = self.current_pose_waypoint()
+                self.publish_status("home_recorded", "current pose recorded as home", {"home": home})
             if not self.dry_run:
                 self.publish_status("waiting_move_base", "waiting for move_base", {})
                 if not self.client.wait_for_server(rospy.Duration(10.0)):
                     raise RuntimeError("move_base action server not available")
-            for index, wp in enumerate(waypoints):
+            route_iterator = (itertools.cycle(enumerate(waypoints))
+                              if payload["loop"] else enumerate(waypoints))
+            for index, wp in route_iterator:
+                current_index = index
+                current_wp = wp
+                self.current_point_index = index
+                self.current_point_id = wp["id"]
                 if self.cancel_requested or rospy.is_shutdown():
                     raise RuntimeError("cancelled")
                 self.publish_status("navigating", "going to waypoint %s" % wp["id"], {
@@ -277,24 +339,61 @@ class InspectionServoRouteRunner:
                 })
                 nav = self.navigate_to(wp)
                 point = {
+                    "request_id": payload["request_id"],
+                    "mission_type": payload["mission_type"],
+                    "point_index": index,
+                    "point_id": wp["id"],
                     "waypoint": wp,
                     "navigation": nav,
                     "search": None,
                     "target": nav.get("detection"),
                     "kimi": None,
                 }
+                if self.cancel_requested:
+                    raise RuntimeError("cancelled")
                 if not nav.get("ok"):
-                    results.append(point)
-                    if self.stop_on_nav_fail:
+                    store_point_result(index, point)
+                    if payload["on_nav_failure"] == "stop":
                         raise RuntimeError("navigation failed at %s: %s" % (wp["id"], nav.get("state_text")))
                     continue
                 self.stop_robot()
+                self.publish_status("arrived", "arrived at waypoint %s" % wp["id"], {
+                    "index": index,
+                    "waypoint": wp,
+                    "navigation": nav,
+                })
+                inspection = payload["inspection"]
+                if not inspection["enabled"]:
+                    store_point_result(index, point)
+                    self.publish_status("point_complete", "navigation point complete", {
+                        "index": index, "waypoint": wp,
+                    })
+                    continue
                 self.publish_status("searching_target", "searching target at %s" % wp["id"], {
                     "index": index,
                     "waypoint": wp,
                     "detection": nav.get("detection"),
                 })
-                search = self.search_target_at_waypoint(wp)
+                if inspection["vision_search"]:
+                    search = self.search_target_at_waypoint(wp)
+                else:
+                    with self.lock:
+                        self.search_active = True
+                        self.detection_candidate = None
+                        self.detection_stable_count = 0
+                        self.last_detection_class = ""
+                    try:
+                        candidate = self.wait_for_detection_window(
+                            self.search_settle_sec)
+                        search = {
+                            "ok": bool(candidate),
+                            "state": "target_found" if candidate else "target_not_found",
+                            "target": candidate,
+                            "rotated_deg": 0.0,
+                        }
+                    finally:
+                        with self.lock:
+                            self.search_active = False
                 point["search"] = search
                 if search.get("target"):
                     point["target"] = search["target"]
@@ -312,7 +411,8 @@ class InspectionServoRouteRunner:
                         "waypoint": wp,
                         "search": search,
                     })
-                if search.get("ok") and self.enable_kimi_after_search:
+                if (search.get("ok") and inspection["ai_analysis"] and
+                        self.enable_kimi_after_search):
                     self.publish_status("kimi_running", "running kimi inspection at %s" % wp["id"], {
                         "index": index,
                         "waypoint": wp,
@@ -326,20 +426,23 @@ class InspectionServoRouteRunner:
                         "kimi": kimi,
                     })
                     if not kimi.get("ok") and self.stop_on_kimi_fail:
-                        results.append(point)
+                        store_point_result(index, point)
                         raise RuntimeError("kimi inspection failed at %s: %s" % (wp["id"], kimi.get("error") or kimi.get("state")))
-                results.append(point)
-            if not self.cancel_requested:
-                self.publish_status("returning_home", "returning to start pose", {"home": home})
+                store_point_result(index, point)
+            if payload["return_home"] and not self.cancel_requested:
+                self.publish_status("returning_home", "returning to start pose", {
+                    "index": len(waypoints), "waypoint": home,
+                })
                 home_nav = self.navigate_to(home)
                 if not home_nav.get("ok"):
                     raise RuntimeError("return home failed: %s" % home_nav.get("state_text"))
             ok = True
-            state = "complete"
-            message = "inspection servo route complete"
+            state = "completed"
+            message = "mission complete"
         except Exception as exc:
             message = str(exc)
-            self.publish_status("error", message, {"completed_points": len(results)})
+            state = "cancelled" if message == "cancelled" else "error"
+            self.publish_status(state, message, {"completed_points": len(results)})
         finally:
             self.stop_robot()
             result = {
@@ -347,6 +450,11 @@ class InspectionServoRouteRunner:
                 "state": state,
                 "stage": state,
                 "message": message,
+                "schema_version": 1,
+                "request_id": payload.get("request_id"),
+                "mission_type": payload.get("mission_type"),
+                "point_index": current_index,
+                "point_id": current_wp.get("id") if current_wp else None,
                 "stamp": now_sec(),
                 "elapsed_sec": round(time.time() - started, 3),
                 "waypoint_count": len(waypoints),
@@ -354,10 +462,15 @@ class InspectionServoRouteRunner:
                 "results": results,
                 "points": results,
             }
-            self.result_pub.publish(String(json.dumps(result, ensure_ascii=False)))
+            encoded = String(json.dumps(result, ensure_ascii=False))
+            self.result_pub.publish(encoded)
+            self.legacy_result_pub.publish(encoded)
             self.publish_status(state, message, result)
             with self.lock:
                 self.busy = False
+                self.current_mission = {}
+                self.current_point_index = None
+                self.current_point_id = None
 
     def navigate_to(self, wp):
         if self.dry_run:
@@ -564,16 +677,31 @@ class InspectionServoRouteRunner:
             self.cmd_pub.publish(z)
             time.sleep(0.025)
 
-    def publish_status(self, state, message, extra):
+    def publish_status(self, state, message, extra, mission=None):
+        mission = mission or self.current_mission or {}
+        waypoint = extra.get("waypoint") if isinstance(extra, dict) else None
+        point_index = extra.get("index") if isinstance(extra, dict) else None
+        if point_index is None and isinstance(extra, dict):
+            point_index = extra.get("point_index")
+        if point_index is None:
+            point_index = self.current_point_index
         payload = {
+            "schema_version": 1,
             "stamp": now_sec(),
             "state": state,
             "stage": state,
             "message": message,
             "busy": self.busy,
+            "request_id": mission.get("request_id"),
+            "mission_type": mission.get("mission_type"),
+            "point_index": point_index,
+            "point_id": (waypoint.get("id") if isinstance(waypoint, dict)
+                         else self.current_point_id),
             "extra": extra,
         }
-        self.status_pub.publish(String(json.dumps(payload, ensure_ascii=False)))
+        encoded = String(json.dumps(payload, ensure_ascii=False))
+        self.status_pub.publish(encoded)
+        self.legacy_status_pub.publish(encoded)
 
 
 def main():

@@ -15,6 +15,9 @@
     <arg name="use_kimi_server" value="true" />
     <arg name="use_kimi_bridge" value="true" />
     <arg name="use_inspection_servo_route" value="true" />
+    <arg name="mission_inspection_capable" value="true" />
+    <!-- Mission runner is the only task-level /cmd_vel owner. -->
+    <arg name="use_voice_controller" value="false" />
     <!-- 识别默认每隔一帧处理一次，降低 RKNN 占用；需要实时检测时可传 meter_frame_skip:=1。 -->
     <arg name="meter_frame_skip" value="$(arg meter_frame_skip)" />
   </include>

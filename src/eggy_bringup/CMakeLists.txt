@@ -41,6 +41,8 @@ catkin_install_python(PROGRAMS
   scripts/kimi_inspection_bridge.py
   scripts/kimi_inspection_server.py
   scripts/inspection_servo_route_runner.py
+  scripts/mission_protocol.py
+  scripts/ros_qt5_gui_adapter.py
   scripts/meter_visual_servo.py
   scripts/eggy_nav_mode_status.py
   scripts/eggy_network_status.py
