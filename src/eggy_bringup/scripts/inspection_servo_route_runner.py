@@ -264,14 +264,21 @@ class InspectionServoRouteRunner:
             safe, reason = self.scan_is_safe_for_rotation()
             if not safe:
                 self.stop_robot()
+                self.publish_status("rotation_sensor_stop", "rotation stopped by sensor safety check", {
+                    "waypoint": wp, "reason": reason,
+                })
                 return {"ok": False, "state": "rotation_sensor_stop", "message": reason}
             candidate = self.current_detection_candidate()
             if not candidate:
                 self.stop_robot()
+                self.publish_status("target_lost", "target lost while aligning", {"waypoint": wp})
                 return {"ok": False, "state": "target_lost", "message": "target lost while aligning"}
             width = float(candidate.get("image_width", 0.0))
             if width <= 0.0:
                 self.stop_robot()
+                self.publish_status("invalid_detection", "detection frame dimensions are invalid", {
+                    "waypoint": wp,
+                })
                 return {"ok": False, "state": "invalid_detection", "message": "missing image dimensions"}
             center_x = (float(candidate.get("x1", 0.0)) + float(candidate.get("x2", 0.0))) * 0.5
             error = (center_x - width * 0.5) / max(width * 0.5, 1.0)
@@ -282,6 +289,11 @@ class InspectionServoRouteRunner:
                 self.publish_smooth_command(0.0, 0.0)
                 if time.time() - hold_started >= self.align_hold_sec:
                     self.stop_robot()
+                    self.publish_status("aligned", "target aligned within camera center tolerance", {
+                        "waypoint": wp,
+                        "target": candidate,
+                        "center_error": round(error, 4),
+                    })
                     return {
                         "ok": True,
                         "state": "aligned",
@@ -297,6 +309,7 @@ class InspectionServoRouteRunner:
                 self.publish_smooth_command(0.0, target_wz)
             rospy.sleep(1.0 / self.control_rate_hz)
         self.stop_robot()
+        self.publish_status("align_timeout", "target alignment timed out", {"waypoint": wp})
         return {"ok": False, "state": "align_timeout", "message": "target alignment timed out"}
 
     def on_request(self, msg):
