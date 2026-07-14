@@ -39,6 +39,71 @@
 - TCP 9090 未暴露到公网，非授权 Tailnet 身份无法访问小车。
 - 已形成实车联调记录，且可一键停用 Tailscale、恢复原局域网 ROSBridge。
 
+## RK3568 NPU、相机与 Kimi 图像链优化
+
+**状态：待取得实车后建立基线，再按 P0/P1/P2 逐项开发**
+
+目标：在不牺牲水表/压力表检出率和读数质量的前提下，修正当前 RKNN 推理契约、图像几何和同帧关联问题，减少无效解码、缩放、拷贝与 JPEG 重编码，并确保原始流、带框流和 Kimi 分析流职责清晰、没有重复发布或反馈环路。
+
+### 当前源码基线（尚未按本次版本在实车复测）
+
+- `eggy_system.launch` 请求 Orbbec UVC 相机以 1280×720、10 fps、MJPG 工作，并将相机 JPEG 字节直通发布到 `/camera/front/image_source/compressed`；实际协商出的 V4L2 分辨率、帧率、格式和相机内部 JPEG 质量必须在实车读取，不能只相信请求参数。
+- `meter_rknn_detect_cpp` 解码源 JPEG，将 1280×720 直接拉伸为 960×960 RGB/NHWC/UINT8 送入 RK3568 NPU；随后在 CPU 执行 DFL、Sigmoid、NMS，在原尺寸图像上画框并以 JPEG q85 发布 `/camera/front/image/compressed`，检测 JSON 发布到 `/meter/detection`。
+- 默认主链路中，原始源流由相机独占发布，带框流由 RKNN 节点独占发布；`use_meter_rknn=false` 且显式启用兼容 relay 时才转发源流。默认不发布 `/camera/front/image_raw`，当前设计不需要额外的视频中转节点。
+- 主系统中的 Kimi bridge 订阅 `/camera/front/image_source/compressed`，缓存“最新一帧”并按请求上传原始 JPEG；服务端默认最长边 1280、重新编码为 JPEG q92 后再发送给 Kimi。对于 1280×720 输入通常不缩放，但仍发生一次解码和有损重编码。
+- `inspection_mission.launch` 的 Kimi 图像默认值仍是 `/camera/front/image/compressed`，可能把带框且已 q85 重编码的图像再次交给 Kimi，需与主 profile 统一。
+- `inspection_reading_auto_node.py` 若被额外手工启动，也可能发布 `/kimi_inspection/result`；实车启动图中必须确认该结果话题只有一个权威发布者。
+
+### 实车基线采集（任何优化前必须完成）
+
+- [ ] 记录板端 Git SHA、RKNN 模型 SHA256、模型契约清单、RKNN SDK/runtime/driver 版本和实际启动参数，保留可回滚版本。
+- [ ] 使用 `v4l2-ctl --all`、`--list-formats-ext` 和运行日志记录相机实际协商的宽高、帧率、像素格式、曝光及可用 MJPEG 模式。
+- [ ] 对 `/camera/front/image_source/compressed`、`/camera/front/image/compressed`、`/meter/detection` 执行 `rostopic info/hz/bw`，记录发布者、订阅者、频率、带宽和是否存在重复发布者。
+- [ ] 采集固定测试集，覆盖水表/压力表的远近、倾斜、遮挡、反光、明暗和运动模糊；保存原始 JPEG、检测框、Kimi 请求图和最终读数用于前后对比。
+- [ ] 分段测量 JPEG 解码、预处理、`inputs_set`、NPU run、`outputs_get`、后处理、画框、JPEG 编码及端到端耗时，同时记录 CPU、内存、NPU 利用率和丢帧。
+- [ ] 建立当前模型的 Precision/Recall、误检漏检、Kimi 读数准确率及失败样例基线；没有基线时不调整阈值或量化方案。
+
+### P0：正确性、图像质量与话题契约
+
+- [ ] `rknn_run` 非零返回时立即停止本帧处理并发布明确错误，禁止继续获取输出或发布可能陈旧的检测结果。
+- [ ] 对每次关键 `rknn_query` 检查返回值；启动时强校验输入为 960×960、RGB、UINT8、NHWC，输出为 3 个 NCHW raw-head，通道数 66，空间尺寸为 120×120、60×60、30×30。任何模型契约不匹配都应 fail-fast。
+- [ ] 将 1280×720 到 960×960 的直接拉伸改为保持宽高比的 letterbox，并保存缩放与 padding 参数；检测框必须精确逆映射到原图坐标。
+- [ ] 检测结果携带源图 `stamp`、`frame_id` 和稳定的帧标识；巡检 runner 必须让 Kimi 读取触发该检测的同一帧，不能取请求到达时的任意“最新帧”。
+- [ ] Kimi 默认使用无叠加框的原始源图，并同时提交带适量边距的目标 ROI 与必要的全景上下文；禁止把 UI 调试用带框图作为读数主输入。
+- [ ] 统一 `eggy_system.launch`、`inspection_profile.launch` 和 `inspection_mission.launch` 的 Kimi 源话题为 `/camera/front/image_source/compressed`。
+- [ ] 当输入 JPEG 最长边不超过 Kimi 限制且无需裁剪时，复用原始 JPEG 字节，避免无意义的 q92 再编码；需要 ROI/缩放时再做一次可配置的高质量编码。
+- [ ] 启动时拒绝 RKNN 图像输入话题与 overlay 输出话题相同，增加 launch 契约测试，防止自订阅反馈环路和原始帧/带框帧混流。
+- [ ] 确认 `/kimi_inspection/result` 只有一个权威发布者；旧自动读数节点若保留，必须改名、禁用或由统一 launch 明确互斥。
+
+### P1：减少无效工作并补齐可观测性
+
+- [ ] 校验并实际调用现有 `keep_detection()` 几何过滤；若实测证明无价值则删除，避免保留未生效的“伪过滤”代码。
+- [ ] 使用固定测试集和 PR 曲线重新标定置信度、面积、边界和 NMS 阈值；NMS 前增加可配置 top-K，避免对大量低价值候选做排序和抑制。
+- [ ] overlay 无订阅者时跳过画框与 JPEG q85 编码；原始检测 JSON 仍应正常发布。
+- [ ] 使用 RAII 确保 RKNN outputs 在所有成功和异常路径尽早释放，避免错误分支泄漏或长期占用 runtime buffer。
+- [ ] 为 decode、preprocess、NPU、postprocess、overlay encode、Kimi prepare/upload/response 和完整任务增加统一时延指标，并记录源帧年龄、分辨率、JPEG 质量、模型版本和 request_id。
+- [ ] 相机节点启动后读取并记录 V4L2 实际协商值；OpenCV fallback 也必须读取 `CAP_PROP_*` 实际值，避免日志只显示请求值。
+- [ ] 复核 `meter_visual_servo`/巡检对准参数是否仍沿用 640×480 标定；所有像素阈值和面积比例需针对 1280×720 实车重新标定或改成归一化量。
+- [ ] 采用单槽 latest-frame 工作队列和单一 RKNN context/推理线程；新帧覆盖旧待处理帧，禁止积压导致巡检使用过期画面。
+
+### P2：NPU/内存优化与工程化
+
+- [ ] 复用 OpenCV Mat、输入缓冲、候选框 vector 和 RKNN input/output 描述数组，减少每帧堆分配与内存拷贝。
+- [ ] 在保持检测精度的条件下评估 `want_float=0` 的量化输出和 CPU 端反量化；记录相对 FP32 输出的带宽、延迟和精度差异后再决定是否启用。
+- [ ] 评估 RK3568 RGA 完成 resize/letterbox/颜色转换，以及 RKNN tensor memory/零拷贝输入；只有实测端到端收益明确且回滚路径完整时才替换 OpenCV 路径。
+- [ ] 通过 CMake `find_path`/`find_library` 检测 RKNN SDK，不把板端头文件和库路径散落硬编码。
+- [ ] 为模型增加 SHA256、输入输出契约 manifest、类别名称、量化方式和兼容 SDK/runtime 版本；启动日志必须输出并校验这些信息。
+- [ ] 格式化当前单行密集的 C++ 识别节点，并为 letterbox/逆映射、DFL、Sigmoid、NMS、话题相等拒绝和错误分支添加离线测试；重构前先锁定现有行为。
+
+### 完成条件
+
+- `rknn_run` 或模型契约异常不会发布陈旧检测，节点会给出可定位的错误阶段和版本信息。
+- letterbox 与逆映射通过离线几何测试，并在实车固定测试集上不降低检测召回率。
+- RKNN 检测、ROI 和 Kimi 分析严格关联同一源帧；Kimi 收到无框、清晰、可追踪分辨率与压缩参数的图像。
+- 默认启动图中原始流、带框流和 Kimi 结果均只有一个权威发布者，不存在图像反馈环路或无必要的 Python 视频搬运。
+- 优化前后有可复现的检测/Kimi 准确率、时延、CPU、内存、NPU 和 ROS 带宽对比；性能提升不得以明显降低识别质量为代价。
+- 每一阶段都有独立提交、实车验收记录和明确回滚命令；P0 未通过前不进入 P2 硬件加速改造。
+
 ## 危险状态远程通知（4G）
 
 **状态：待实车确认后开发**
