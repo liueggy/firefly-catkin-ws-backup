@@ -23,9 +23,13 @@ class _Publisher:
 class _Client:
     def __init__(self):
         self.cancel_count = 0
+        self.cancel_all_count = 0
 
     def cancel_goal(self):
         self.cancel_count += 1
+
+    def cancel_all_goals(self):
+        self.cancel_all_count += 1
 
 
 def _install_ros_stubs():
@@ -61,6 +65,7 @@ def _install_ros_stubs():
     sys.modules["move_base_msgs.msg"] = move_base_msg
     std = types.ModuleType("std_msgs")
     std_msg = types.ModuleType("std_msgs.msg")
+    std_msg.Bool = _Message
     std_msg.String = _Message
     sys.modules["std_msgs"] = std
     sys.modules["std_msgs.msg"] = std_msg
@@ -197,6 +202,14 @@ class MissionRunnerStateTest(unittest.TestCase):
         runner.handle_request(_Message('{"command":"cancel","request_id":"mission-1"}'))
         self.assertEqual(1, runner.client.cancel_count)
         self.assertTrue(runner.cancel_requested)
+
+    def test_emergency_stop_cancels_active_mission(self):
+        runner = self.make_runner()
+        runner.current_mission = self.mission(False)
+        runner.on_emergency_stop(_Message(True))
+        self.assertTrue(runner.cancel_requested)
+        self.assertEqual(1, runner.client.cancel_all_count)
+        self.assertIn("emergency_stopped", runner.status_events)
 
     def test_duplicate_request_id_is_rejected(self):
         runner = self.make_runner()

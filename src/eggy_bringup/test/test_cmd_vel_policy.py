@@ -27,6 +27,15 @@ class CmdVelPolicyTest(unittest.TestCase):
     def test_no_live_source_means_stop(self):
         self.assertIsNone(select_source({}, 10.0))
 
+    def test_emergency_stop_blocks_every_live_source(self):
+        sources = {
+            "navigation": {"stamp": 10.0, "timeout": 0.5, "priority": 40},
+            "mission": {"stamp": 10.0, "timeout": 0.5, "priority": 60},
+            "manual": {"stamp": 10.0, "timeout": 0.5, "priority": 80},
+            "safety": {"stamp": 10.0, "timeout": 0.5, "priority": 100},
+        }
+        self.assertIsNone(select_source(sources, 10.0, blocked=True))
+
 
 if __name__ == "__main__":
     unittest.main()

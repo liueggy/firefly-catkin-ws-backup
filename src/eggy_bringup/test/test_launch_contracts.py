@@ -22,6 +22,11 @@ class LaunchContractTest(unittest.TestCase):
             self.assertIn('to="/cmd_vel/navigation"', text)
             self.assertNotIn('to="/cmd_vel"', text)
 
+    def test_system_launches_authoritative_cmd_vel_arbiter(self):
+        system = read("launch/eggy_system.launch")
+        self.assertIn('type="cmd_vel_arbiter.py"', system)
+        self.assertIn('name="eggy_cmd_vel_arbiter"', system)
+
     def test_raw_camera_relay_and_legacy_adapter_switch_are_explicit(self):
         system = read("launch/eggy_system.launch")
         self.assertIn("eggy_camera_raw_to_qt", system)

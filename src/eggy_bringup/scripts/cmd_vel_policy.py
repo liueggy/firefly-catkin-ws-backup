@@ -2,7 +2,9 @@
 """Pure priority/lease selection for Eggy's cmd_vel arbiter."""
 
 
-def select_source(sources, now):
+def select_source(sources, now, blocked=False):
+    if blocked:
+        return None
     live = []
     for name, item in sources.items():
         if now - float(item["stamp"]) <= float(item["timeout"]):

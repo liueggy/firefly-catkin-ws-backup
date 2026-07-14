@@ -19,7 +19,7 @@ import rospy
 from actionlib_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped, Quaternion, Twist
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 import tf
 
 from mission_protocol import normalize_mission_request
@@ -94,13 +94,16 @@ class InspectionServoRouteRunner:
         self.cmd_pub = rospy.Publisher(self.cmd_vel_topic, Twist, queue_size=10)
         self.kimi_request_pub = rospy.Publisher("/kimi_inspection/request", String, queue_size=5)
 
+        self.tf_listener = tf.TransformListener()
+        self.client = actionlib.SimpleActionClient("/move_base", MoveBaseAction)
+
         rospy.Subscriber("/eggy/mission/request", String, self.on_request, queue_size=5)
+        rospy.Subscriber("/eggy/emergency_stop", Bool,
+                         self.on_emergency_stop, queue_size=1)
         rospy.Subscriber("/inspection_servo_route/request", String, self.on_legacy_request, queue_size=5)
         rospy.Subscriber("/kimi_inspection/result", String, self.on_kimi_result, queue_size=10)
         rospy.Subscriber("/meter/detection", String, self.on_detection, queue_size=10)
 
-        self.tf_listener = tf.TransformListener()
-        self.client = actionlib.SimpleActionClient("/move_base", MoveBaseAction)
         self.publish_status("ready", "inspection servo route runner ready", {})
         rospy.loginfo("inspection_servo_route_runner ready dry_run=%s", self.dry_run)
 
@@ -167,6 +170,16 @@ class InspectionServoRouteRunner:
 
     def on_request(self, msg):
         self.handle_request(msg, legacy_inspection=False)
+
+    def on_emergency_stop(self, msg):
+        if not msg.data:
+            return
+        self.cancel_requested = True
+        self.client.cancel_all_goals()
+        self.stop_robot()
+        if self.busy:
+            self.publish_status(
+                "emergency_stopped", "mission cancelled by software emergency stop", {})
 
     def on_legacy_request(self, msg):
         rospy.logwarn("/inspection_servo_route/request is deprecated; use /eggy/mission/request")
