@@ -19,6 +19,7 @@ import shlex
 import shutil
 import socket
 import tempfile
+import uuid
 import yaml
 
 import rospy
@@ -191,10 +192,22 @@ class EggyCommandCenter:
         except Exception:
             active_map = {}
 
+        profile = {
+            'mapping_slam': 'mapping',
+            'static_nav': 'navigation',
+            'inspection': 'inspection',
+        }.get(mode, 'unknown')
+        profile_available = {
+            'mapping': True,
+            'navigation': bool(active_map),
+            'inspection': bool(active_map),
+        }
+
         return {
             'stamp': self.now(),
             'mode': mode,
-            'profile': mode,
+            'profile': profile,
+            'state': 'ready' if profile != 'unknown' else 'degraded',
             'loadavg': [round(load1, 2), round(load5, 2), round(load15, 2)],
             'nodes': node_state,
             'topics': topic_state,
@@ -211,6 +224,8 @@ class EggyCommandCenter:
                 'inspection': mode == 'inspection',
                 'camera': node_state.get('/eggy_camera', False),
                 'meter_detection': node_state.get('/meter_rknn_detect_cpp', False),
+                'profile_switch': True,
+                'profiles': profile_available,
             },
         }
 
@@ -556,11 +571,23 @@ class EggyCommandCenter:
         if map_file:
             args.extend(['--map', shlex.quote(map_file)])
         command = '/usr/local/bin/eggy-stack-start ' + ' '.join(args)
+        transition = self.build_status()
+        transition.update({
+            'state': 'switching',
+            'requested_profile': profile,
+            'request_id': req.get('request_id', ''),
+        })
+        transition['capabilities']['profile_switch'] = False
+        self.pub_status.publish(String(json.dumps(transition, ensure_ascii=False)))
+        rospy.loginfo('profile switch accepted: request_id=%s profile=%s map=%s',
+                      req.get('request_id', ''), profile, map_file or '-')
         self._launch_detached(command, '/tmp/eggy_profile_switch.log')
         return self.make_response(req, True, '已请求切换运行 profile，等待节点重新上线', {
             'requested_profile': profile,
             'map_file': map_file,
             'restart': True,
+            'accepted': True,
+            'state': 'switching',
         })
 
     def handle_upload_map(self, req):
@@ -870,6 +897,12 @@ class EggyCommandCenter:
                 'stamp': self.now(),
             })
             return
+
+        request_id = str(req.get('request_id', '')).strip()
+        if not request_id:
+            request_id = 'legacy-' + uuid.uuid4().hex
+            req['request_id'] = request_id
+            rospy.logwarn('command request missing request_id; assigned %s', request_id)
 
         try:
             resp = self.dispatch(req)

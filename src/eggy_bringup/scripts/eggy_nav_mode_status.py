@@ -9,6 +9,7 @@ status so the UI and task-chain controls can make that distinction explicit.
 """
 
 import json
+import os
 import socket
 import time
 
@@ -120,6 +121,12 @@ class EggyNavModeStatus(object):
             "inspection": bool(inspection_running and move_base_running),
             "camera": _node_present(nodes, "/eggy_camera"),
             "meter_detection": meter_running,
+            "profile_switch": True,
+            "profiles": {
+                "mapping": True,
+                "navigation": os.path.isfile(self.map_file),
+                "inspection": os.path.isfile(self.map_file),
+            },
         }
 
         return {
