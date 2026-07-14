@@ -19,6 +19,7 @@ import rospy
 from actionlib_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped, Quaternion, Twist
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
+from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
 import tf
 
@@ -62,12 +63,24 @@ class InspectionServoRouteRunner:
         self.search_min_score = float(rospy.get_param("~search_min_score", 0.65))
         self.search_stable_frames = int(rospy.get_param("~search_stable_frames", 2))
         self.search_max_age = float(rospy.get_param("~search_max_age", 0.8))
-        self.search_timeout = float(rospy.get_param("~search_timeout", 24.0))
+        self.search_timeout = float(rospy.get_param("~search_timeout", 30.0))
         self.search_angular_speed_deg = float(rospy.get_param("~search_angular_speed_deg", 18.0))
         self.search_max_rotation_deg = float(rospy.get_param("~search_max_rotation_deg", 360.0))
         self.search_step_deg = float(rospy.get_param("~search_step_deg", 90.0))
         self.search_step_pause_sec = float(rospy.get_param("~search_step_pause_sec", 1.0))
         self.search_settle_sec = float(rospy.get_param("~search_settle_sec", 2.5))
+        self.align_timeout = float(rospy.get_param("~align_timeout", 8.0))
+        self.align_center_deadband = float(rospy.get_param("~align_center_deadband", 0.12))
+        self.align_hold_sec = float(rospy.get_param("~align_hold_sec", 0.45))
+        self.align_kp = float(rospy.get_param("~align_kp", 1.8))
+        self.align_max_wz = float(rospy.get_param("~align_max_wz", 0.42))
+        self.align_min_wz = float(rospy.get_param("~align_min_wz", 0.08))
+        self.angular_accel = float(rospy.get_param("~angular_accel", 0.9))
+        self.scan_topic = rospy.get_param("~scan_topic", "/scan")
+        self.scan_timeout = float(rospy.get_param("~scan_timeout", 0.6))
+        self.rotation_clearance = float(rospy.get_param("~rotation_clearance", 0.32))
+        self.control_rate_hz = max(5.0, float(rospy.get_param("~control_rate_hz", 12.0)))
+        self.roi_padding_ratio = float(rospy.get_param("~roi_padding_ratio", 0.18))
         self.dry_run = bool(rospy.get_param("~dry_run", False))
         self.inspection_capable = bool(rospy.get_param("~inspection_capable", True))
 
@@ -81,6 +94,11 @@ class InspectionServoRouteRunner:
         self.detection_candidate = None
         self.detection_stable_count = 0
         self.last_detection_class = ""
+        self.last_cmd_wz = 0.0
+        self.last_cmd_vx = 0.0
+        self.last_cmd_time = 0.0
+        self.last_scan = None
+        self.last_scan_time = 0.0
         self.current_mission = {}
         self.current_point_index = None
         self.current_point_id = None
@@ -103,6 +121,7 @@ class InspectionServoRouteRunner:
         rospy.Subscriber("/inspection_servo_route/request", String, self.on_legacy_request, queue_size=5)
         rospy.Subscriber("/kimi_inspection/result", String, self.on_kimi_result, queue_size=10)
         rospy.Subscriber("/meter/detection", String, self.on_detection, queue_size=10)
+        rospy.Subscriber(self.scan_topic, LaserScan, self.on_scan, queue_size=1)
 
         self.publish_status("ready", "inspection servo route runner ready", {})
         rospy.loginfo("inspection_servo_route_runner ready dry_run=%s", self.dry_run)
@@ -121,6 +140,8 @@ class InspectionServoRouteRunner:
         try:
             payload = json.loads(msg.data)
             detections = payload.get("detections") or []
+            image_width = float(payload.get("image_width") or 0.0)
+            image_height = float(payload.get("image_height") or 0.0)
         except Exception:
             return
 
@@ -151,7 +172,13 @@ class InspectionServoRouteRunner:
                 self.detection_candidate = None
                 return
             class_name = str(best.get("class_name", ""))
-            if class_name == self.last_detection_class:
+            previous = self.detection_candidate
+            same_track = (
+                previous is not None
+                and class_name == self.last_detection_class
+                and self.box_iou(previous, best) >= 0.25
+            )
+            if same_track:
                 self.detection_stable_count += 1
             else:
                 self.last_detection_class = class_name
@@ -161,12 +188,116 @@ class InspectionServoRouteRunner:
                 "score": float(best.get("score", 0.0)),
                 "stable_frames": self.detection_stable_count,
                 "stamp": time.time(),
+                "image_width": image_width,
+                "image_height": image_height,
+                "x1": float(best.get("x1", 0.0)),
+                "y1": float(best.get("y1", 0.0)),
+                "x2": float(best.get("x2", 0.0)),
+                "y2": float(best.get("y2", 0.0)),
                 "box": {
                     key: best.get(key)
                     for key in ("x1", "y1", "x2", "y2")
                     if key in best
                 },
             }
+
+    @staticmethod
+    def box_iou(left, right):
+        try:
+            ax1, ay1 = float(left.get("x1", 0.0)), float(left.get("y1", 0.0))
+            ax2, ay2 = float(left.get("x2", 0.0)), float(left.get("y2", 0.0))
+            bx1, by1 = float(right.get("x1", 0.0)), float(right.get("y1", 0.0))
+            bx2, by2 = float(right.get("x2", 0.0)), float(right.get("y2", 0.0))
+            ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+            ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+            intersection = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+            union = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+            union += max(0.0, bx2 - bx1) * max(0.0, by2 - by1) - intersection
+            return intersection / union if union > 1e-6 else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    def on_scan(self, msg):
+        self.last_scan = msg
+        self.last_scan_time = time.time()
+
+    def scan_is_safe_for_rotation(self):
+        if self.last_scan is None or time.time() - self.last_scan_time > self.scan_timeout:
+            return False, "scan_timeout"
+        valid = [
+            value for value in self.last_scan.ranges
+            if math.isfinite(value) and self.last_scan.range_min <= value <= self.last_scan.range_max
+        ]
+        if not valid:
+            return False, "scan_empty"
+        clearance = min(valid)
+        return clearance >= self.rotation_clearance, "obstacle_%.2f" % clearance
+
+    def current_yaw(self):
+        trans, rot = self.tf_listener.lookupTransform(
+            self.default_frame, self.base_frame, rospy.Time(0))
+        return tf.transformations.euler_from_quaternion(rot)[2]
+
+    @staticmethod
+    def angle_delta(current, initial):
+        return math.atan2(math.sin(current - initial), math.cos(current - initial))
+
+    def publish_smooth_command(self, linear_x=0.0, angular_z=0.0):
+        now = time.time()
+        dt = max(0.02, min(0.2, now - self.last_cmd_time)) if self.last_cmd_time else 0.08
+        max_delta = max(0.05, self.angular_accel * dt)
+        delta = max(-max_delta, min(max_delta, angular_z - self.last_cmd_wz))
+        self.last_cmd_wz += delta
+        self.last_cmd_vx = linear_x
+        self.last_cmd_time = now
+        cmd = Twist()
+        cmd.linear.x = linear_x
+        cmd.angular.z = self.last_cmd_wz
+        self.cmd_pub.publish(cmd)
+
+    def align_target_at_waypoint(self, wp):
+        deadline = time.time() + float(wp.get("align_timeout", self.align_timeout))
+        hold_started = None
+        while not rospy.is_shutdown() and time.time() < deadline:
+            if self.cancel_requested:
+                return {"ok": False, "state": "cancelled", "message": "cancelled"}
+            safe, reason = self.scan_is_safe_for_rotation()
+            if not safe:
+                self.stop_robot()
+                return {"ok": False, "state": "rotation_sensor_stop", "message": reason}
+            candidate = self.current_detection_candidate()
+            if not candidate:
+                self.stop_robot()
+                return {"ok": False, "state": "target_lost", "message": "target lost while aligning"}
+            width = float(candidate.get("image_width", 0.0))
+            if width <= 0.0:
+                self.stop_robot()
+                return {"ok": False, "state": "invalid_detection", "message": "missing image dimensions"}
+            center_x = (float(candidate.get("x1", 0.0)) + float(candidate.get("x2", 0.0))) * 0.5
+            error = (center_x - width * 0.5) / max(width * 0.5, 1.0)
+            stable = abs(error) <= self.align_center_deadband
+            if stable:
+                if hold_started is None:
+                    hold_started = time.time()
+                self.publish_smooth_command(0.0, 0.0)
+                if time.time() - hold_started >= self.align_hold_sec:
+                    self.stop_robot()
+                    return {
+                        "ok": True,
+                        "state": "aligned",
+                        "target": candidate,
+                        "center_error": round(error, 4),
+                    }
+            else:
+                hold_started = None
+                target_wz = max(-self.align_max_wz,
+                                min(self.align_max_wz, -self.align_kp * error))
+                if abs(target_wz) < self.align_min_wz:
+                    target_wz = self.align_min_wz if target_wz >= 0.0 else -self.align_min_wz
+                self.publish_smooth_command(0.0, target_wz)
+            rospy.sleep(1.0 / self.control_rate_hz)
+        self.stop_robot()
+        return {"ok": False, "state": "align_timeout", "message": "target alignment timed out"}
 
     def on_request(self, msg):
         self.handle_request(msg, legacy_inspection=False)
@@ -432,7 +563,7 @@ class InspectionServoRouteRunner:
                         "waypoint": wp,
                         "target": point.get("target"),
                     })
-                    kimi = self.run_kimi_inspection(wp)
+                    kimi = self.run_kimi_inspection(wp, point.get("target"))
                     point["kimi"] = kimi
                     self.publish_status("kimi_complete", "kimi inspection finished at %s" % wp["id"], {
                         "index": index,
@@ -560,12 +691,9 @@ class InspectionServoRouteRunner:
                 })
                 candidate = self.wait_for_detection_window(settle_sec)
                 if candidate:
-                    return {
-                        "ok": True,
-                        "state": "target_found",
-                        "target": candidate,
-                        "rotated_deg": 0.0,
-                    }
+                    aligned = self.align_target_at_waypoint(wp)
+                    if aligned.get("ok"):
+                        return dict(aligned, rotated_deg=0.0)
             while not rospy.is_shutdown() and time.time() < deadline:
                 if self.cancel_requested:
                     return {"ok": False, "state": "cancelled", "message": "cancelled"}
@@ -585,12 +713,11 @@ class InspectionServoRouteRunner:
                 step_result = self.rotate_step(step_rad, angular_speed, wp)
                 rotated_rad += step_result["rotated_rad"]
                 if step_result.get("target"):
-                    return {
-                        "ok": True,
-                        "state": "target_found",
-                        "target": step_result["target"],
-                        "rotated_deg": round(math.degrees(rotated_rad), 2),
-                    }
+                    aligned = self.align_target_at_waypoint(wp)
+                    if aligned.get("ok"):
+                        return dict(aligned, rotated_deg=round(math.degrees(rotated_rad), 2))
+                    if aligned.get("state") in ("cancelled", "invalid_detection", "align_timeout"):
+                        return dict(aligned, rotated_deg=round(math.degrees(rotated_rad), 2))
                 if not step_result["ok"]:
                     return {
                         "ok": False,
@@ -605,12 +732,11 @@ class InspectionServoRouteRunner:
                 })
                 candidate = self.wait_for_detection_window(pause_sec)
                 if candidate:
-                    return {
-                        "ok": True,
-                        "state": "target_found",
-                        "target": candidate,
-                        "rotated_deg": round(math.degrees(rotated_rad), 2),
-                    }
+                    aligned = self.align_target_at_waypoint(wp)
+                    if aligned.get("ok"):
+                        return dict(aligned, rotated_deg=round(math.degrees(rotated_rad), 2))
+                    if aligned.get("state") in ("cancelled", "invalid_detection", "align_timeout"):
+                        return dict(aligned, rotated_deg=round(math.degrees(rotated_rad), 2))
             return {
                 "ok": False,
                 "state": "search_timeout",
@@ -634,11 +760,19 @@ class InspectionServoRouteRunner:
         return self.current_detection_candidate()
 
     def rotate_step(self, target_rad, angular_speed, wp):
+        try:
+            start_yaw = self.current_yaw()
+        except Exception as exc:
+            return {"ok": False, "state": "tf_unavailable", "message": str(exc), "rotated_rad": 0.0}
         rotated_rad = 0.0
-        prev_time = time.time()
+        direction = 1.0
         while not rospy.is_shutdown() and rotated_rad < target_rad:
             if self.cancel_requested:
                 return {"ok": False, "state": "cancelled", "message": "cancelled", "rotated_rad": rotated_rad}
+            safe, reason = self.scan_is_safe_for_rotation()
+            if not safe:
+                self.stop_robot()
+                return {"ok": False, "state": "rotation_sensor_stop", "message": reason, "rotated_rad": rotated_rad}
             candidate = self.current_detection_candidate()
             if candidate:
                 self.stop_robot()
@@ -648,19 +782,18 @@ class InspectionServoRouteRunner:
                     "rotated_deg": round(math.degrees(rotated_rad), 2),
                 })
                 return {"ok": True, "state": "target_found", "target": candidate, "rotated_rad": rotated_rad}
-            now = time.time()
-            dt = max(0.0, now - prev_time)
-            prev_time = now
-            remaining = max(0.0, target_rad - rotated_rad)
-            cmd = Twist()
-            cmd.angular.z = min(angular_speed, max(0.12, remaining / max(dt, 0.1)))
-            self.cmd_pub.publish(cmd)
-            rospy.sleep(0.08)
-            rotated_rad += cmd.angular.z * max(0.08, dt)
+            self.publish_smooth_command(0.0, direction * angular_speed)
+            try:
+                current = self.current_yaw()
+                rotated_rad = abs(self.angle_delta(current, start_yaw))
+            except Exception as exc:
+                self.stop_robot()
+                return {"ok": False, "state": "tf_unavailable", "message": str(exc), "rotated_rad": rotated_rad}
+            rospy.sleep(1.0 / self.control_rate_hz)
         self.stop_robot()
         return {"ok": True, "state": "step_complete", "rotated_rad": rotated_rad}
 
-    def run_kimi_inspection(self, wp):
+    def run_kimi_inspection(self, wp, target=None):
         if self.dry_run:
             rospy.sleep(0.2)
             return {"ok": True, "state": "DRY_RUN", "task": wp.get("kimi_task", self.kimi_task)}
@@ -670,6 +803,7 @@ class InspectionServoRouteRunner:
             "task": str(wp.get("kimi_task", self.kimi_task)),
             "waypoint_id": wp.get("id"),
             "expected_class": wp.get("expected_class", "any"),
+            "roi": self.roi_from_target(target),
         }
         with self.lock:
             self.kimi_results.pop(request_id, None)
@@ -685,11 +819,38 @@ class InspectionServoRouteRunner:
             rospy.sleep(0.1)
         return {"ok": False, "state": "kimi_timeout", "request_id": request_id, "task": payload["task"]}
 
+    def roi_from_target(self, target):
+        if not isinstance(target, dict):
+            return None
+        try:
+            width = float(target.get("image_width", 0.0))
+            height = float(target.get("image_height", 0.0))
+            x1, y1 = float(target["x1"]), float(target["y1"])
+            x2, y2 = float(target["x2"]), float(target["y2"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if width <= 0.0 or height <= 0.0 or x2 <= x1 or y2 <= y1:
+            return None
+        pad_x = (x2 - x1) * self.roi_padding_ratio
+        pad_y = (y2 - y1) * self.roi_padding_ratio
+        return {
+            "x1": max(0.0, x1 - pad_x),
+            "y1": max(0.0, y1 - pad_y),
+            "x2": min(width, x2 + pad_x),
+            "y2": min(height, y2 + pad_y),
+            "image_width": width,
+            "image_height": height,
+            "padding_ratio": self.roi_padding_ratio,
+        }
+
     def stop_robot(self):
         z = Twist()
         for _ in range(8):
             self.cmd_pub.publish(z)
-            time.sleep(0.025)
+            rospy.sleep(0.02)
+        self.last_cmd_vx = 0.0
+        self.last_cmd_wz = 0.0
+        self.last_cmd_time = time.time()
 
     def publish_status(self, state, message, extra, mission=None):
         mission = mission or self.current_mission or {}

@@ -63,6 +63,11 @@ def _install_ros_stubs():
     move_base_msg.MoveBaseGoal = _Message
     sys.modules["move_base_msgs"] = move_base
     sys.modules["move_base_msgs.msg"] = move_base_msg
+    sensor = types.ModuleType("sensor_msgs")
+    sensor_msg = types.ModuleType("sensor_msgs.msg")
+    sensor_msg.LaserScan = _Message
+    sys.modules["sensor_msgs"] = sensor
+    sys.modules["sensor_msgs.msg"] = sensor_msg
     std = types.ModuleType("std_msgs")
     std_msg = types.ModuleType("std_msgs.msg")
     std_msg.Bool = _Message
@@ -101,6 +106,7 @@ class MissionRunnerStateTest(unittest.TestCase):
         runner.inspection_capable = True
         runner.seen_request_ids = set()
         runner.search_settle_sec = 0
+        runner.roi_padding_ratio = 0.18
         runner.status_events = []
         runner.publish_status = lambda state, message, extra, mission=None: runner.status_events.append(state)
         runner.stop_robot = lambda: None
@@ -117,8 +123,20 @@ class MissionRunnerStateTest(unittest.TestCase):
         runner.navigate_to = lambda _wp: runner.calls.__setitem__("nav", runner.calls["nav"] + 1) or {"ok": True, "state_text": "OK"}
         runner.search_target_at_waypoint = lambda _wp: runner.calls.__setitem__("search", runner.calls["search"] + 1) or {"ok": True, "target": {"class_name": "any"}}
         runner.wait_for_detection_window = lambda _seconds: {"class_name": "passive"}
-        runner.run_kimi_inspection = lambda _wp: runner.calls.__setitem__("kimi", runner.calls["kimi"] + 1) or {"ok": True}
+        runner.run_kimi_inspection = lambda _wp, _target=None: runner.calls.__setitem__("kimi", runner.calls["kimi"] + 1) or {"ok": True}
         return runner
+
+    def test_detection_roi_is_expanded_and_clamped(self):
+        runner = self.make_runner()
+        roi = runner.roi_from_target({
+            "image_width": 640, "image_height": 480,
+            "x1": 100, "y1": 120, "x2": 300, "y2": 320,
+        })
+        self.assertEqual((64.0, 84.0, 336.0, 356.0),
+                         (roi["x1"], roi["y1"], roi["x2"], roi["y2"]))
+        self.assertAlmostEqual(1.0, runner.box_iou(
+            {"x1": 0, "y1": 0, "x2": 10, "y2": 10},
+            {"x1": 0, "y1": 0, "x2": 10, "y2": 10}))
 
     def mission(self, return_home=False, inspection_enabled=False):
         mission = {

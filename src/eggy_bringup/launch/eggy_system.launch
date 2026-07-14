@@ -36,13 +36,21 @@
   <arg name="inspection_dry_run" default="false" />
   <arg name="inspection_enable_kimi_after_search" default="true" />
   <arg name="inspection_move_base_timeout" default="120" />
-  <arg name="inspection_search_timeout" default="24" />
+  <arg name="inspection_search_timeout" default="30" />
   <arg name="inspection_search_min_score" default="0.55" />
   <arg name="inspection_search_stable_frames" default="10" />
   <arg name="inspection_search_angular_speed_deg" default="18" />
   <arg name="inspection_search_step_deg" default="90" />
   <arg name="inspection_search_step_pause_sec" default="1.0" />
   <arg name="inspection_search_settle_sec" default="0.5" />
+  <arg name="inspection_align_timeout" default="8.0" />
+  <arg name="inspection_align_center_deadband" default="0.12" />
+  <arg name="inspection_align_hold_sec" default="0.45" />
+  <arg name="inspection_align_kp" default="1.8" />
+  <arg name="inspection_align_max_wz" default="0.42" />
+  <arg name="inspection_scan_timeout" default="0.6" />
+  <arg name="inspection_rotation_clearance" default="0.32" />
+  <arg name="inspection_roi_padding_ratio" default="0.18" />
   <arg name="use_command_center" default="true" />
   <arg name="use_network_status" default="true" />
   <arg name="use_shell_bridge" default="true" />
@@ -207,6 +215,7 @@
       <param name="api_base" value="$(arg kimi_api_base)" />
       <param name="default_task" value="meter" />
       <param name="timeout" value="60.0" />
+      <param name="max_image_age" value="1.5" />
     </node>
   </group>
 
@@ -228,6 +237,14 @@
       <param name="search_step_pause_sec" value="$(arg inspection_search_step_pause_sec)" />
       <param name="search_settle_sec" value="$(arg inspection_search_settle_sec)" />
       <param name="search_max_rotation_deg" value="360.0" />
+      <param name="align_timeout" value="$(arg inspection_align_timeout)" />
+      <param name="align_center_deadband" value="$(arg inspection_align_center_deadband)" />
+      <param name="align_hold_sec" value="$(arg inspection_align_hold_sec)" />
+      <param name="align_kp" value="$(arg inspection_align_kp)" />
+      <param name="align_max_wz" value="$(arg inspection_align_max_wz)" />
+      <param name="scan_timeout" value="$(arg inspection_scan_timeout)" />
+      <param name="rotation_clearance" value="$(arg inspection_rotation_clearance)" />
+      <param name="roi_padding_ratio" value="$(arg inspection_roi_padding_ratio)" />
     </node>
   </group>
 
