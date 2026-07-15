@@ -2,7 +2,7 @@
 
 ## Tailscale 远程 ROSBridge（4G）
 
-**状态：待取得实车后安装与联调**
+**状态：Wi-Fi 链路已部署并验证；4G 链路因 SIM 未识别暂未实测（2026-07-15）**
 
 目标：小车只使用 SIM 卡/4G 上网时，通过 Tailscale 加入受控的虚拟网络；Qt 端选择“ Tailscale（ROSBridge）”连接预设后，仍通过现有 ROSBridge WebSocket 协议访问车端 TCP 9090。Tailscale 只承担网络可达性，不新增 ROS 中转节点，不改变 mission、话题或 JSON 契约。
 
@@ -12,6 +12,25 @@
 2. 确认板端存在 `/dev/net/tun`，系统架构为 `aarch64`，并核对 Ubuntu 20.04/内核环境可运行当前 Tailscale ARM64 客户端。
 3. 检查 4G 网卡是否也使用 `100.64.0.0/10`；若与 Tailscale IPv4 地址段冲突，先制定 IPv6/MagicDNS 或路由规避方案。
 4. 确认 `/rosbridge_websocket` 正常监听 TCP 9090，并保持现有心跳、重连、`cmd_vel` 仲裁和底盘超时停车策略。
+
+### 2026-07-15 部署记录
+
+- 板端为 Ubuntu 20.04/aarch64，已安装官方 Tailscale `1.98.9`，节点名为
+  `eggy-001`；`tailscaled` 已启用开机启动。
+- 当前 4.19.232 内核没有 `/dev/net/tun`，且策略路由不可用，因此不能创建标准
+  `tailscale0`。已采用官方用户态网络模式，并使用持久化 Tailscale Serve 将尾网内
+  TCP 9090 转发至本机 `127.0.0.1:9090`；未配置出口节点、子网路由、Tailscale DNS
+  或 Tailscale SSH。
+- Windows 到小车在 Wi-Fi 出口下为直连，`tailscale ping` RTT 约 12 ms；TCP 9090、
+  WebSocket 握手及 `/rosapi/get_time` 服务调用均通过。重启 `tailscaled` 后登录状态和
+  9090 转发保持正常。
+- 4G 模组服务能够识别 Quectel EC200A 和 USB 网卡，但模组返回 `+CME ERROR: 10`
+  （未检测到 SIM），运营商状态为 `+COPS: 0`，4G 网卡因此没有地址和默认路由。需要
+  断电后检查 SIM 卡方向、卡座接触和套餐状态，再进行“仅 4G、关闭 Wi-Fi”切换测试。
+- 用户态 TCP 转发不会改变 ROSBridge 消息、mission、话题或 JSON 契约；但地图、雷达、
+  costmap 与相机并发时的吞吐和 CPU 占用仍需在 4G 恢复后测量。
+- 当前使用个人账号交互授权完成首次联调。量产前仍需改为一次性预批准的
+  `tag:robot` 认证，并在 Tailnet Grants/ACL 中仅授权指定操作员访问 TCP 9090。
 
 ### 部署原则
 
