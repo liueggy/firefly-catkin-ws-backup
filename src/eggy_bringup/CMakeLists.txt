@@ -17,10 +17,12 @@ find_package(catkin REQUIRED COMPONENTS
 )
 
 catkin_package(
+  INCLUDE_DIRS include
   CATKIN_DEPENDS actionlib roscpp rospy nav_msgs sensor_msgs std_msgs geometry_msgs move_base_msgs tf tf2_ros
 )
 
 include_directories(
+  include
   ${catkin_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
   /usr/include
@@ -32,8 +34,16 @@ target_link_libraries(eggy_odom_fuser_node ${catkin_LIBRARIES})
 add_executable(meter_rknn_detect_node src/meter_rknn_detect_node.cpp)
 target_link_libraries(meter_rknn_detect_node ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} rknnrt)
 
+if(CATKIN_ENABLE_TESTING)
+  catkin_add_gtest(test_meter_letterbox test/test_meter_letterbox.cpp)
+endif()
+
 install(TARGETS eggy_odom_fuser_node meter_rknn_detect_node
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+install(DIRECTORY include/${PROJECT_NAME}/
+  DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
 )
 
 catkin_install_python(PROGRAMS
