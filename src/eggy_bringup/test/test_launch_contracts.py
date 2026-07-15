@@ -1,5 +1,6 @@
 import os
 import unittest
+import xml.etree.ElementTree as ET
 
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -32,6 +33,19 @@ class LaunchContractTest(unittest.TestCase):
         self.assertIn("eggy_camera_raw_to_qt", system)
         self.assertIn('legacy_qt_visual_relays" default="false"', system)
         self.assertIn('legacy_qt_camera_relay" default="false"', system)
+
+    def test_meter_input_and_overlay_topics_cannot_form_default_feedback_loop(self):
+        root = ET.fromstring(read("launch/eggy_system.launch"))
+        args = {item.attrib["name"]: item.attrib.get("default") for item in root.findall("arg")}
+        self.assertEqual("/camera/front/image_source/compressed", args["meter_image_topic"])
+        self.assertEqual("/camera/front/image/compressed", args["meter_overlay_topic"])
+        self.assertNotEqual(args["meter_image_topic"], args["meter_overlay_topic"])
+
+        meter = root.find(".//node[@name='meter_rknn_detect_cpp']")
+        self.assertIsNotNone(meter)
+        params = {item.attrib["name"]: item.attrib["value"] for item in meter.findall("param")}
+        self.assertEqual("$(arg meter_image_topic)", params["image_topic"])
+        self.assertEqual("$(arg meter_overlay_topic)", params["overlay_comp_topic"])
 
 
 if __name__ == "__main__":

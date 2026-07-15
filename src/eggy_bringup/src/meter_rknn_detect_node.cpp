@@ -8,6 +8,8 @@
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <iomanip>
+#include <initializer_list>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -15,6 +17,11 @@
 
 struct Detection{ float x1,y1,x2,y2,score; int class_id; };
 static std::string ds(const rknn_tensor_attr& a){ std::ostringstream o; o<<"["; for(uint32_t i=0;i<a.n_dims;i++){ if(i)o<<","; o<<a.dims[i]; } o<<"]"; return o.str(); }
+static bool dims_are(const rknn_tensor_attr& a,std::initializer_list<uint32_t> expected){
+  if(a.n_dims!=expected.size()) return false;
+  size_t i=0; for(uint32_t dim:expected){ if(a.dims[i++]!=dim) return false; }
+  return true;
+}
 static bool rf(const std::string& p,std::vector<uint8_t>& d){ std::ifstream f(p,std::ios::binary|std::ios::ate); if(!f)return false; auto s=f.tellg(); if(s<=0)return false; f.seekg(0); d.resize(s); return (bool)f.read((char*)d.data(),s); }
 static float iou(const Detection&a,const Detection&b){ float x1=std::max(a.x1,b.x1),y1=std::max(a.y1,b.y1),x2=std::min(a.x2,b.x2),y2=std::min(a.y2,b.y2),w=std::max(0.f,x2-x1),h=std::max(0.f,y2-y1); float in=w*h,aa=std::max(0.f,a.x2-a.x1)*std::max(0.f,a.y2-a.y1),ab=std::max(0.f,b.x2-b.x1)*std::max(0.f,b.y2-b.y1); return in/(aa+ab-in+1e-6f); }
 static bool keep_detection(const Detection& d,int iw,int ih){
@@ -47,6 +54,9 @@ public:
   pnh_.param<float>("conf",c_,0.95f);
   pnh_.param<float>("nms",n_,0.45f);
   pnh_.param<int>("max_det",md_,2);
+  const std::string resolved_input=nh_.resolveName(t_img_);
+  const std::string resolved_overlay=nh_.resolveName(t_ov_);
+  if(resolved_input==resolved_overlay) throw std::runtime_error("image_topic and overlay_comp_topic resolve to the same topic: "+resolved_input);
   names_={"pressure_gauge","water_meter"}; load();
   pub_json_=nh_.advertise<std_msgs::String>(t_json_,1);
   pub_comp_=nh_.advertise<sensor_msgs::CompressedImage>(t_ov_,1);
@@ -55,13 +65,30 @@ public:
  }
  ~Node(){ if(ctx_) rknn_destroy(ctx_); }
 private:
+ void query_or_throw(rknn_query_cmd cmd,void* data,uint32_t size,const std::string& stage){
+  int ret=rknn_query(ctx_,cmd,data,size);
+  if(ret) throw std::runtime_error(stage+" failed: "+std::to_string(ret));
+ }
+ void validate_model_contract(){
+  if(io_.n_input!=1 || io_.n_output!=3) throw std::runtime_error("model contract mismatch: expected 1 input and 3 outputs, got "+std::to_string(io_.n_input)+" and "+std::to_string(io_.n_output));
+  if(in_attr_.fmt!=RKNN_TENSOR_NHWC || in_attr_.type!=RKNN_TENSOR_UINT8 || !dims_are(in_attr_,{1,960,960,3}))
+    throw std::runtime_error("model input contract mismatch: expected UINT8 NHWC [1,960,960,3], got fmt="+std::to_string(in_attr_.fmt)+" type="+std::to_string(in_attr_.type)+" dims="+ds(in_attr_));
+  const uint32_t sizes[3]={120,60,30};
+  for(uint32_t i=0;i<3;i++){
+   if(out_attrs_[i].fmt!=RKNN_TENSOR_NCHW || !dims_are(out_attrs_[i],{1,66,sizes[i],sizes[i]}))
+    throw std::runtime_error("model output "+std::to_string(i)+" contract mismatch: expected NCHW [1,66,"+std::to_string(sizes[i])+","+std::to_string(sizes[i])+"], got fmt="+std::to_string(out_attrs_[i].fmt)+" dims="+ds(out_attrs_[i]));
+  }
+ }
  void load(){
   std::vector<uint8_t> mod; if(!rf(m_,mod)) throw std::runtime_error("read model failed");
   int ret=rknn_init(&ctx_,mod.data(),mod.size(),0,nullptr); if(ret) throw std::runtime_error("rknn_init failed");
-  rknn_sdk_version v{}; rknn_query(ctx_,RKNN_QUERY_SDK_VERSION,&v,sizeof(v));
-  ret=rknn_query(ctx_,RKNN_QUERY_IN_OUT_NUM,&io_,sizeof(io_)); if(ret) throw std::runtime_error("query io failed");
-  in_attr_={}; in_attr_.index=0; rknn_query(ctx_,RKNN_QUERY_INPUT_ATTR,&in_attr_,sizeof(in_attr_));
-  out_attrs_.resize(io_.n_output); for(uint32_t i=0;i<io_.n_output;i++){ out_attrs_[i]={}; out_attrs_[i].index=i; rknn_query(ctx_,RKNN_QUERY_OUTPUT_ATTR,&out_attrs_[i],sizeof(rknn_tensor_attr)); ROS_INFO("out%u dims=%s",i,ds(out_attrs_[i]).c_str());}
+  rknn_sdk_version v{}; query_or_throw(RKNN_QUERY_SDK_VERSION,&v,sizeof(v),"query_sdk_version");
+  query_or_throw(RKNN_QUERY_IN_OUT_NUM,&io_,sizeof(io_),"query_in_out_num");
+  if(io_.n_input!=1 || io_.n_output!=3) throw std::runtime_error("model contract mismatch: expected 1 input and 3 outputs, got "+std::to_string(io_.n_input)+" and "+std::to_string(io_.n_output));
+  in_attr_={}; in_attr_.index=0; query_or_throw(RKNN_QUERY_INPUT_ATTR,&in_attr_,sizeof(in_attr_),"query_input_attr");
+  out_attrs_.resize(io_.n_output); for(uint32_t i=0;i<io_.n_output;i++){ out_attrs_[i]={}; out_attrs_[i].index=i; query_or_throw(RKNN_QUERY_OUTPUT_ATTR,&out_attrs_[i],sizeof(rknn_tensor_attr),"query_output_attr_"+std::to_string(i)); ROS_INFO("out%u dims=%s",i,ds(out_attrs_[i]).c_str());}
+  validate_model_contract();
+  ROS_INFO("RKNN contract accepted sdk=%s driver=%s input=%s RGB/UINT8/NHWC",v.api_version,v.drv_version,ds(in_attr_).c_str());
  }
  std::vector<uint8_t> prp(const cv::Mat& b){ cv::Mat r,g; cv::resize(b,r,cv::Size(960,960)); cv::cvtColor(r,g,cv::COLOR_BGR2RGB); if(!g.isContinuous()) g=g.clone(); return std::vector<uint8_t>(g.data,g.data+g.total()*g.elemSize()); }
  float dfl(const float* p,int base,int step){ float mx=-1e9f; for(int k=0;k<16;k++) mx=std::max(mx,p[base+k*step]); float s=0,e=0; for(int k=0;k<16;k++){ float v=std::exp(p[base+k*step]-mx); s+=v; e+=v*k; } return e/(s+1e-6f); }
@@ -83,7 +110,7 @@ private:
  sensor_msgs::CompressedImage cm(const cv::Mat& im,const std_msgs::Header& h){ sensor_msgs::CompressedImage m; m.header=h; m.format="jpeg"; std::vector<int> p={cv::IMWRITE_JPEG_QUALITY,85}; cv::imencode(".jpg",im,m.data,p); return m; }
  std::string jn(const cv::Mat& im,const std::vector<Detection>& dd,int64_t npu,int64_t tt){ std::ostringstream o; o.setf(std::ios::fixed); o<<std::setprecision(4); o<<"{\"detected\":"<<(dd.empty()?"false":"true")<<",\"frame_id\":"<<f_<<",\"image_width\":"<<im.cols<<",\"image_height\":"<<im.rows<<",\"npu_us\":"<<npu<<",\"total_ms\":"<<tt<<",\"detections\":["; for(size_t i=0;i<dd.size();i++){ if(i)o<<","; auto&d=dd[i]; o<<"{\"class_id\":"<<d.class_id<<",\"class_name\":\""<<names_[d.class_id]<<"\",\"score\":"<<d.score<<",\"x1\":"<<d.x1<<",\"y1\":"<<d.y1<<",\"x2\":"<<d.x2<<",\"y2\":"<<d.y2<<"}"; } o<<"]}"; return o.str(); }
  void er(const std::string&s,int c){ std_msgs::String m; m.data="{\"detected\":false,\"error_stage\":\""+s+"\",\"code\":"+std::to_string(c)+"}"; pub_json_.publish(m); ROS_ERROR_THROTTLE(2,"%s %d",s.c_str(),c); }
- void cb(const sensor_msgs::CompressedImageConstPtr& msg){ f_++; if(f_%std::max(1,fs_)!=0) return; auto t0=std::chrono::steady_clock::now(); cv::Mat buf(1,(int)msg->data.size(),CV_8UC1,const_cast<uint8_t*>(msg->data.data())); cv::Mat im=cv::imdecode(buf,cv::IMREAD_COLOR); if(im.empty()) return; auto inp=prp(im); rknn_input in{}; in.index=0; in.buf=inp.data(); in.size=inp.size(); in.pass_through=0; in.type=RKNN_TENSOR_UINT8; in.fmt=RKNN_TENSOR_NHWC; int ret=rknn_inputs_set(ctx_,1,&in); if(ret){er("inputs_set",ret);return;} ret=rknn_run(ctx_,nullptr); if(ret) ROS_WARN_THROTTLE(2,"rknn_run %d",ret); std::vector<rknn_output> os(io_.n_output); for(uint32_t i=0;i<io_.n_output;i++){ os[i]={}; os[i].index=i; os[i].want_float=1; } ret=rknn_outputs_get(ctx_,io_.n_output,os.data(),nullptr); if(ret){er("outputs_get",ret);return;} rknn_perf_run perf{}; rknn_query(ctx_,RKNN_QUERY_PERF_RUN,&perf,sizeof(perf)); auto de=pp(os,im.cols,im.rows); draw(im,de); std_msgs::String jm; jm.data=jn(im,de,perf.run_duration,std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-t0).count()); pub_json_.publish(jm); pub_comp_.publish(cm(im,msg->header)); rknn_outputs_release(ctx_,io_.n_output,os.data()); }
+ void cb(const sensor_msgs::CompressedImageConstPtr& msg){ f_++; if(f_%std::max(1,fs_)!=0) return; auto t0=std::chrono::steady_clock::now(); cv::Mat buf(1,(int)msg->data.size(),CV_8UC1,const_cast<uint8_t*>(msg->data.data())); cv::Mat im=cv::imdecode(buf,cv::IMREAD_COLOR); if(im.empty()) return; auto inp=prp(im); rknn_input in{}; in.index=0; in.buf=inp.data(); in.size=inp.size(); in.pass_through=0; in.type=RKNN_TENSOR_UINT8; in.fmt=RKNN_TENSOR_NHWC; int ret=rknn_inputs_set(ctx_,1,&in); if(ret){er("inputs_set",ret);return;} ret=rknn_run(ctx_,nullptr); if(ret){er("rknn_run",ret);return;} std::vector<rknn_output> os(io_.n_output); for(uint32_t i=0;i<io_.n_output;i++){ os[i]={}; os[i].index=i; os[i].want_float=1; } ret=rknn_outputs_get(ctx_,io_.n_output,os.data(),nullptr); if(ret){er("outputs_get",ret);return;} rknn_perf_run perf{}; ret=rknn_query(ctx_,RKNN_QUERY_PERF_RUN,&perf,sizeof(perf)); if(ret){rknn_outputs_release(ctx_,io_.n_output,os.data());er("query_perf_run",ret);return;} auto de=pp(os,im.cols,im.rows); draw(im,de); std_msgs::String jm; jm.data=jn(im,de,perf.run_duration,std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-t0).count()); pub_json_.publish(jm); pub_comp_.publish(cm(im,msg->header)); rknn_outputs_release(ctx_,io_.n_output,os.data()); }
  ros::NodeHandle nh_,pnh_; ros::Subscriber sub_; ros::Publisher pub_json_,pub_comp_; std::string m_,t_img_,t_json_,t_ov_; std::vector<std::string> names_; int fs_=1,md_=2; float c_=0.95f,n_=0.45f; uint64_t f_=0; rknn_context ctx_=0; rknn_input_output_num io_{}; rknn_tensor_attr in_attr_{}; std::vector<rknn_tensor_attr> out_attrs_;
 };
 int main(int argc,char**argv){ ros::init(argc,argv,"meter_rknn_detect_cpp"); try{ Node n; ros::spin(); }catch(const std::exception&e){ ROS_FATAL("%s",e.what()); return 1; } return 0; }
