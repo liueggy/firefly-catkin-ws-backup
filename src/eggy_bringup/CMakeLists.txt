@@ -16,6 +16,8 @@ find_package(catkin REQUIRED COMPONENTS
   tf2_ros
 )
 
+catkin_python_setup()
+
 catkin_package(
   INCLUDE_DIRS include
   CATKIN_DEPENDS actionlib roscpp rospy nav_msgs sensor_msgs std_msgs geometry_msgs move_base_msgs tf tf2_ros
@@ -51,9 +53,6 @@ catkin_install_python(PROGRAMS
   scripts/kimi_inspection_bridge.py
   scripts/kimi_inspection_server.py
   scripts/inspection_servo_route_runner.py
-  scripts/mission_protocol.py
-  scripts/profile_contract.py
-  scripts/cmd_vel_policy.py
   scripts/cmd_vel_arbiter.py
   scripts/ros_qt5_gui_adapter.py
   scripts/eggy_command_center.py

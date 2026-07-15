@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Pure priority/lease selection for Eggy's cmd_vel arbiter."""
 
 

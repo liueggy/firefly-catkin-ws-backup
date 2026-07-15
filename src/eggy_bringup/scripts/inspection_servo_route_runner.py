@@ -23,7 +23,7 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
 import tf
 
-from mission_protocol import normalize_mission_request
+from eggy_bringup.mission_protocol import normalize_mission_request
 
 
 GOAL_STATUS_TEXT = {

@@ -2,10 +2,10 @@ import os
 import sys
 import unittest
 
-SCRIPTS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts"))
-sys.path.insert(0, SCRIPTS)
+PACKAGE_SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, PACKAGE_SRC)
 
-from cmd_vel_policy import select_source
+from eggy_bringup.cmd_vel_policy import select_source
 
 
 class CmdVelPolicyTest(unittest.TestCase):

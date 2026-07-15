@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Pure helpers for the authoritative Eggy profile contract."""
 
 

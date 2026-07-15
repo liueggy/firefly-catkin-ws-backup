@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Pure helpers for the Eggy mission JSON protocol (no ROS dependency)."""
 
 import math

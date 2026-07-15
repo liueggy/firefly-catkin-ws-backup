@@ -2,10 +2,10 @@ import os
 import sys
 import unittest
 
-SCRIPTS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts"))
-sys.path.insert(0, SCRIPTS)
+PACKAGE_SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, PACKAGE_SRC)
 
-from profile_contract import build_profile_contract
+from eggy_bringup.profile_contract import build_profile_contract
 
 
 class ProfileContractTest(unittest.TestCase):

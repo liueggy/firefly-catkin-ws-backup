@@ -3,10 +3,10 @@ import os
 import sys
 import unittest
 
-SCRIPTS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts"))
-sys.path.insert(0, SCRIPTS)
+PACKAGE_SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, PACKAGE_SRC)
 
-from mission_protocol import build_goal_pose_mission, normalize_mission_request
+from eggy_bringup.mission_protocol import build_goal_pose_mission, normalize_mission_request
 
 
 class MissionProtocolTest(unittest.TestCase):

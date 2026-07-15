@@ -7,7 +7,7 @@ import rospy
 from geometry_msgs.msg import Twist
 from std_msgs.msg import Bool, String
 
-from cmd_vel_policy import select_source
+from eggy_bringup.cmd_vel_policy import select_source
 
 
 class CmdVelArbiter(object):

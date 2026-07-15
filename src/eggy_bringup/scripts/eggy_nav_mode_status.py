@@ -16,7 +16,7 @@ import time
 import rosnode
 import rospy
 from std_msgs.msg import String
-from profile_contract import build_profile_contract
+from eggy_bringup.profile_contract import build_profile_contract
 
 
 def _as_bool(value):

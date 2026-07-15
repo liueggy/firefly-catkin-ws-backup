@@ -8,7 +8,7 @@ from nav_msgs.msg import Path, OccupancyGrid
 from sensor_msgs.msg import BatteryState
 from std_msgs.msg import Float32, String
 
-from mission_protocol import build_goal_pose_mission
+from eggy_bringup.mission_protocol import build_goal_pose_mission
 
 class RosQt5GuiAdapter:
     def __init__(self):
