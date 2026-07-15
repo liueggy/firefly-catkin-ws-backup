@@ -71,8 +71,8 @@ private:
  }
  void validate_model_contract(){
   if(io_.n_input!=1 || io_.n_output!=3) throw std::runtime_error("model contract mismatch: expected 1 input and 3 outputs, got "+std::to_string(io_.n_input)+" and "+std::to_string(io_.n_output));
-  if(in_attr_.fmt!=RKNN_TENSOR_NHWC || in_attr_.type!=RKNN_TENSOR_UINT8 || !dims_are(in_attr_,{1,960,960,3}))
-    throw std::runtime_error("model input contract mismatch: expected UINT8 NHWC [1,960,960,3], got fmt="+std::to_string(in_attr_.fmt)+" type="+std::to_string(in_attr_.type)+" dims="+ds(in_attr_));
+  if(in_attr_.fmt!=RKNN_TENSOR_NHWC || in_attr_.type!=RKNN_TENSOR_INT8 || !dims_are(in_attr_,{1,960,960,3}))
+    throw std::runtime_error("model input contract mismatch: expected quantized INT8 NHWC [1,960,960,3], got fmt="+std::to_string(in_attr_.fmt)+" type="+std::to_string(in_attr_.type)+" dims="+ds(in_attr_));
   const uint32_t sizes[3]={120,60,30};
   for(uint32_t i=0;i<3;i++){
    if(out_attrs_[i].fmt!=RKNN_TENSOR_NCHW || !dims_are(out_attrs_[i],{1,66,sizes[i],sizes[i]}))
@@ -88,7 +88,7 @@ private:
   in_attr_={}; in_attr_.index=0; query_or_throw(RKNN_QUERY_INPUT_ATTR,&in_attr_,sizeof(in_attr_),"query_input_attr");
   out_attrs_.resize(io_.n_output); for(uint32_t i=0;i<io_.n_output;i++){ out_attrs_[i]={}; out_attrs_[i].index=i; query_or_throw(RKNN_QUERY_OUTPUT_ATTR,&out_attrs_[i],sizeof(rknn_tensor_attr),"query_output_attr_"+std::to_string(i)); ROS_INFO("out%u dims=%s",i,ds(out_attrs_[i]).c_str());}
   validate_model_contract();
-  ROS_INFO("RKNN contract accepted sdk=%s driver=%s input=%s RGB/UINT8/NHWC",v.api_version,v.drv_version,ds(in_attr_).c_str());
+  ROS_INFO("RKNN contract accepted sdk=%s driver=%s model_input=%s INT8/NHWC runtime_input=RGB/UINT8/NHWC",v.api_version,v.drv_version,ds(in_attr_).c_str());
  }
  std::vector<uint8_t> prp(const cv::Mat& b){ cv::Mat r,g; cv::resize(b,r,cv::Size(960,960)); cv::cvtColor(r,g,cv::COLOR_BGR2RGB); if(!g.isContinuous()) g=g.clone(); return std::vector<uint8_t>(g.data,g.data+g.total()*g.elemSize()); }
  float dfl(const float* p,int base,int step){ float mx=-1e9f; for(int k=0;k<16;k++) mx=std::max(mx,p[base+k*step]); float s=0,e=0; for(int k=0;k<16;k++){ float v=std::exp(p[base+k*step]-mx); s+=v; e+=v*k; } return e/(s+1e-6f); }
