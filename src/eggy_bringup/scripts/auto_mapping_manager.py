@@ -18,9 +18,10 @@ import tf
 from actionlib_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseArray, Pose, PoseStamped, Quaternion, Twist
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
-from nav_msgs.msg import GetPlan, OccupancyGrid, Odometry
+from nav_msgs.msg import OccupancyGrid, Odometry
+from nav_msgs.srv import GetPlan
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import Bool, Empty, Float32, String
+from std_msgs.msg import Bool, Empty, Float32, String, UInt8
 
 from eggy_bringup.auto_mapping_core import (
     completion_decision,
@@ -127,7 +128,7 @@ class AutoMappingManager(object):
         rospy.Subscriber("/odom", Odometry, self.odom_cb, queue_size=1)
         rospy.Subscriber("/battery/voltage", Float32, self.battery_cb, queue_size=1)
         rospy.Subscriber("/eggy/emergency_stop", Bool, self.emergency_cb, queue_size=1)
-        rospy.Subscriber("/base/flag_stop", Bool, self.base_stop_cb, queue_size=1)
+        rospy.Subscriber("/base/flag_stop", UInt8, self.base_stop_cb, queue_size=1)
         rospy.Subscriber(
             "/eggy/auto_mapping/safety_status", String, self.safety_status_cb, queue_size=1)
         rospy.Subscriber(

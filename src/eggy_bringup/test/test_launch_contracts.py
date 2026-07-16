@@ -41,6 +41,13 @@ class LaunchContractTest(unittest.TestCase):
         self.assertIn('"mapping": ("/cmd_vel/mapping", 70, 0.4)',
                       read("scripts/cmd_vel_arbiter.py"))
 
+    def test_auto_mapping_uses_deployed_ros_message_types(self):
+        manager = read("scripts/auto_mapping_manager.py")
+        safety = read("scripts/auto_mapping_safety.py")
+        self.assertIn("from nav_msgs.srv import GetPlan", manager)
+        self.assertIn('Subscriber("/base/flag_stop", UInt8', manager)
+        self.assertIn('Subscriber("/base/flag_stop", UInt8', safety)
+
     def test_raw_camera_relay_and_legacy_adapter_switch_are_explicit(self):
         system = read("launch/eggy_system.launch")
         self.assertIn("eggy_camera_raw_to_qt", system)

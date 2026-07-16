@@ -10,7 +10,7 @@ import rospy
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import Bool, Empty, String
+from std_msgs.msg import Bool, Empty, String, UInt8
 
 from eggy_bringup.auto_mapping_core import safe_mapping_twist
 
@@ -56,7 +56,7 @@ class AutoMappingSafety(object):
         rospy.Subscriber("/eggy/auto_mapping/safety_config", String, self.config_cb, queue_size=1)
         rospy.Subscriber("/eggy/auto_mapping/heartbeat", Empty, self.heartbeat_cb, queue_size=1)
         rospy.Subscriber("/eggy/emergency_stop", Bool, self.emergency_cb, queue_size=1)
-        rospy.Subscriber("/base/flag_stop", Bool, self.base_stop_cb, queue_size=1)
+        rospy.Subscriber("/base/flag_stop", UInt8, self.base_stop_cb, queue_size=1)
         self.timer = rospy.Timer(rospy.Duration(0.05), self.tick)
         rospy.on_shutdown(self.shutdown)
         self.publish_status("inactive")
