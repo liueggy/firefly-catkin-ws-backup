@@ -130,6 +130,12 @@ class EggyCommandCenter:
         self.pub_response = rospy.Publisher('/eggy/command/response', String, queue_size=20)
         self.pub_status = rospy.Publisher('/eggy/command/status', String, queue_size=1, latch=True)
         self.sub_request = rospy.Subscriber('/eggy/command/request', String, self.on_request, queue_size=10)
+        self.pub_auto_mapping_request = rospy.Publisher(
+            '/eggy/auto_mapping/request', String, queue_size=5)
+        self.auto_mapping_status = {}
+        self.sub_auto_mapping_status = rospy.Subscriber(
+            '/eggy/auto_mapping/status', String,
+            self.on_auto_mapping_status, queue_size=1)
         self.profile_status = {}
         self.sub_profile = rospy.Subscriber(
             '/eggy/nav_mode/status', String, self.on_profile_status, queue_size=1)
@@ -146,6 +152,14 @@ class EggyCommandCenter:
                 self.profile_status = status
         except (TypeError, ValueError):
             rospy.logwarn_throttle(10.0, 'invalid authoritative profile status ignored')
+
+    def on_auto_mapping_status(self, msg):
+        try:
+            status = json.loads(msg.data)
+            if isinstance(status, dict) and status.get('schema_version') == 1:
+                self.auto_mapping_status = status
+        except (TypeError, ValueError):
+            rospy.logwarn_throttle(10.0, 'invalid automatic mapping status ignored')
 
     def now(self):
         return rospy.Time.now().to_sec()
@@ -212,6 +226,7 @@ class EggyCommandCenter:
             },
             'active_map': active_map,
             'capabilities': capabilities,
+            'auto_mapping': dict(self.auto_mapping_status),
             'profile_authority': '/eggy/nav_mode/status',
         }
 
@@ -821,6 +836,39 @@ class EggyCommandCenter:
             'exit_code': code, 'output': out[-4000:]
         })
 
+    def handle_auto_mapping(self, req, action):
+        if action == 'status':
+            return self.make_response(
+                req, bool(self.auto_mapping_status),
+                '自动建图状态已返回' if self.auto_mapping_status else '尚未收到自动建图状态',
+                self.auto_mapping_status)
+        if action == 'start':
+            profile = str(self.profile_status.get('profile', '')).strip().lower()
+            state = str(self.profile_status.get('state', '')).strip().lower()
+            if profile != 'mapping' or state not in ('ready', 'running'):
+                return self.make_response(
+                    req, False, '请先切换到可用的建图模式',
+                    {'profile_status': self.profile_status})
+        params = req.get('params') or {}
+        if not isinstance(params, dict):
+            return self.make_response(req, False, 'params 必须是对象')
+        allowed = {
+            'max_duration_sec', 'max_linear_speed', 'return_home',
+            'save_draft_on_abort', 'min_frontier_cells'
+        }
+        options = {key: value for key, value in params.items() if key in allowed}
+        payload = {
+            'schema_version': 1,
+            'request_id': str(req.get('request_id', '')),
+            'command': action,
+            'options': options,
+        }
+        self.pub_auto_mapping_request.publish(
+            String(json.dumps(payload, ensure_ascii=False)))
+        return self.make_response(
+            req, True, '自动建图指令已受理',
+            {'accepted': True, 'automatic_mapping_request': payload})
+
     def dispatch(self, req):
         command = str(req.get('command', '')).strip()
         target = str(req.get('target', '')).strip()
@@ -840,6 +888,16 @@ class EggyCommandCenter:
             return self.handle_mapping_start(req)
         if key in ('mapping_reset', 'reset_mapping', 'clear_mapping'):
             return self.handle_mapping_reset(req)
+        if key in ('auto_mapping_start', 'start_auto_mapping'):
+            return self.handle_auto_mapping(req, 'start')
+        if key in ('auto_mapping_stop', 'stop_auto_mapping', 'auto_mapping_cancel'):
+            return self.handle_auto_mapping(req, 'cancel')
+        if key == 'auto_mapping_pause':
+            return self.handle_auto_mapping(req, 'pause')
+        if key == 'auto_mapping_resume':
+            return self.handle_auto_mapping(req, 'resume')
+        if key == 'auto_mapping_status':
+            return self.handle_auto_mapping(req, 'status')
         if key == 'list_maps':
             return self.handle_list_maps(req)
         if key == 'switch_nav_mode':
@@ -867,6 +925,8 @@ class EggyCommandCenter:
         return self.make_response(req, False, '未知命令', {'supported': [
             'status', 'camera_start', 'camera_stop', 'clear_costmaps',
             'mapping_start', 'mapping_stop', 'mapping_reset', 'list_maps',
+            'auto_mapping_start', 'auto_mapping_stop', 'auto_mapping_pause',
+            'auto_mapping_resume', 'auto_mapping_status',
             'switch_nav_mode', 'switch_profile', 'upload_map',
             'get_param', 'set_param', 'dyn_get', 'dyn_set', 'dyn_get_many', 'dyn_set_many'
         ]})

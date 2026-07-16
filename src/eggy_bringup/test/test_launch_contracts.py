@@ -20,13 +20,26 @@ class LaunchContractTest(unittest.TestCase):
     def test_move_base_uses_arbiter_navigation_input(self):
         for name in ("move_base_nav.launch", "move_base_only.launch"):
             text = read("launch/%s" % name)
-            self.assertIn('to="/cmd_vel/navigation"', text)
+            self.assertIn('name="cmd_vel_topic" default="/cmd_vel/navigation"', text)
+            self.assertIn('from="cmd_vel" to="$(arg cmd_vel_topic)"', text)
             self.assertNotIn('to="/cmd_vel"', text)
 
     def test_system_launches_authoritative_cmd_vel_arbiter(self):
         system = read("launch/eggy_system.launch")
         self.assertIn('type="cmd_vel_arbiter.py"', system)
         self.assertIn('name="eggy_cmd_vel_arbiter"', system)
+
+    def test_mapping_profile_routes_move_base_through_fail_safe_guard(self):
+        profile = read("launch/mapping_profile.launch")
+        system = read("launch/eggy_system.launch")
+        move_base = read("launch/move_base_only.launch")
+        self.assertIn('use_auto_mapping" value="true"', profile)
+        self.assertIn('navigation_cmd_vel_topic" value="/cmd_vel/mapping_raw"', profile)
+        self.assertIn('type="auto_mapping_safety.py"', system)
+        self.assertIn('type="auto_mapping_manager.py"', system)
+        self.assertIn('to="$(arg cmd_vel_topic)"', move_base)
+        self.assertIn('"mapping": ("/cmd_vel/mapping", 70, 0.4)',
+                      read("scripts/cmd_vel_arbiter.py"))
 
     def test_raw_camera_relay_and_legacy_adapter_switch_are_explicit(self):
         system = read("launch/eggy_system.launch")

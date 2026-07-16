@@ -38,6 +38,9 @@ target_link_libraries(meter_rknn_detect_node ${catkin_LIBRARIES} ${OpenCV_LIBRAR
 
 if(CATKIN_ENABLE_TESTING)
   catkin_add_gtest(test_meter_letterbox test/test_meter_letterbox.cpp)
+  add_test(NAME test_eggy_python_contracts
+    COMMAND ${PYTHON_EXECUTABLE} -m unittest discover
+            -s ${CMAKE_CURRENT_SOURCE_DIR}/test -p test_*.py)
 endif()
 
 install(TARGETS eggy_odom_fuser_node meter_rknn_detect_node
@@ -50,6 +53,8 @@ install(DIRECTORY include/${PROJECT_NAME}/
 
 catkin_install_python(PROGRAMS
   scripts/auto_map_explore.py
+  scripts/auto_mapping_manager.py
+  scripts/auto_mapping_safety.py
   scripts/kimi_inspection_bridge.py
   scripts/kimi_inspection_server.py
   scripts/inspection_servo_route_runner.py

@@ -5,6 +5,8 @@
     <arg name="use_mapping" value="true" />
     <arg name="use_amcl" value="false" />
     <arg name="use_navigation" value="true" />
+    <arg name="navigation_cmd_vel_topic" value="/cmd_vel/mapping_raw" />
+    <arg name="use_auto_mapping" value="true" />
     <arg name="use_camera" value="false" />
     <arg name="use_meter_rknn" value="false" />
     <arg name="use_kimi_server" value="false" />

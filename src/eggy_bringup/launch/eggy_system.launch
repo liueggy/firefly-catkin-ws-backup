@@ -12,6 +12,8 @@
   <arg name="use_robot_agent" default="false" />
   <arg name="use_simple_nav" default="false" />
   <arg name="use_navigation" default="true" />
+  <arg name="navigation_cmd_vel_topic" default="/cmd_vel/navigation" />
+  <arg name="use_auto_mapping" default="false" />
   <arg name="use_qt5_adapter" default="true" />
   <arg name="profile" default="mapping" />
   <arg name="legacy_qt_visual_relays" default="false" />
@@ -138,10 +140,14 @@
   <!-- Navigation stack (move_base + TEB): full path planning, costmaps, footprint. -->
   <group if="$(arg use_navigation)">
     <group if="$(arg use_amcl)">
-      <include file="$(find eggy_bringup)/launch/move_base_nav.launch" />
+      <include file="$(find eggy_bringup)/launch/move_base_nav.launch">
+        <arg name="cmd_vel_topic" value="$(arg navigation_cmd_vel_topic)" />
+      </include>
     </group>
     <group unless="$(arg use_amcl)">
-      <include file="$(find eggy_bringup)/launch/move_base_only.launch" />
+      <include file="$(find eggy_bringup)/launch/move_base_only.launch">
+        <arg name="cmd_vel_topic" value="$(arg navigation_cmd_vel_topic)" />
+      </include>
     </group>
   </group>
 
@@ -161,6 +167,17 @@
   <!-- Base driver remains on /cmd_vel; all primary producers use leased inputs. -->
   <!-- Single authoritative base-velocity owner. All producers publish to typed inputs. -->
   <node pkg="eggy_bringup" type="cmd_vel_arbiter.py" name="eggy_cmd_vel_arbiter" output="screen" />
+
+  <!-- Automatic mapping uses a fail-closed velocity path. Raw move_base output is never an arbiter source. -->
+  <group if="$(arg use_auto_mapping)">
+    <node pkg="eggy_bringup" type="auto_mapping_safety.py"
+          name="eggy_auto_mapping_safety" output="screen" respawn="true" respawn_delay="2.0" />
+    <node pkg="eggy_bringup" type="auto_mapping_manager.py"
+          name="eggy_auto_mapping_manager" output="screen" respawn="false">
+      <param name="require_battery" value="true" />
+      <param name="map_library_root" value="/root/catkin_ws/maps/library" />
+    </node>
+  </group>
 
   <!-- DISABLED 2026-06-01 (Eggy): Qt 客户端经 rosbridge 未订阅 /eggy_nav/status，关闭省内存/CPU
   <node pkg="eggy_bringup" type="eggy_nav_monitor.py" name="eggy_nav_monitor" output="screen">

@@ -18,6 +18,7 @@ class CmdVelArbiter(object):
         self.config = {
             "navigation": ("/cmd_vel/navigation", 40, 0.6),
             "mission": ("/cmd_vel/mission", 60, 0.6),
+            "mapping": ("/cmd_vel/mapping", 70, 0.4),
             "manual": ("/cmd_vel/manual", 80, 0.4),
             "safety": ("/cmd_vel/safety", 100, 0.5),
         }

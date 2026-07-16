@@ -2,6 +2,7 @@
   <!-- move_base for static-map navigation: TEB local planner, static_map true -->
   <arg name="controller_frequency" default="12.0" />
   <arg name="planner_frequency" default="1.0" />
+  <arg name="cmd_vel_topic" default="/cmd_vel/navigation" />
 
   <node name="move_base" pkg="move_base" type="move_base" output="screen" respawn="false">
     <rosparam file="$(find eggy_bringup)/config/nav/costmap_common_params.yaml" command="load" ns="global_costmap" />
@@ -43,7 +44,7 @@ rotate_recovery:
   frequency: 10.0
     </rosparam>
 
-    <remap from="cmd_vel" to="/cmd_vel/navigation" />
+    <remap from="cmd_vel" to="$(arg cmd_vel_topic)" />
     <remap from="move_base_simple/goal" to="/nav_goal" />
   </node>
 </launch>
