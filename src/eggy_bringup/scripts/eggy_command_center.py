@@ -25,6 +25,7 @@ import yaml
 import rospy
 import rosgraph
 import cv2
+from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
 from nav_msgs.msg import OccupancyGrid
 from nav_msgs.srv import GetMap
@@ -141,6 +142,8 @@ class EggyCommandCenter:
             '/eggy/nav_mode/status', String, self.on_profile_status, queue_size=1)
         self.status_rate = float(rospy.get_param('~status_rate', 1.0))
         self.allow_shell = bool(rospy.get_param('~allow_shell', False))
+        self.camera_stream_topic = rospy.get_param(
+            '~camera_stream_topic', '/camera/front/image_source/compressed')
         self.last_status = {}
         rospy.loginfo('eggy_command_center started: request=/eggy/command/request response=/eggy/command/response status=/eggy/command/status')
 
@@ -246,9 +249,26 @@ class EggyCommandCenter:
 
     def handle_camera_start(self, req):
         code, out = run_cmd('eggy-camera-start', timeout=8)
-        ok = self.wait_node_state('/eggy_camera', True, timeout_sec=12.0)
-        return self.make_response(req, ok, '摄像头启动成功' if ok else '摄像头启动失败', {
-            'exit_code': code, 'output': out, 'eggy_camera': ok
+        node_ok = self.wait_node_state('/eggy_camera', True, timeout_sec=12.0)
+        frame_ok = False
+        frame_error = ''
+        if node_ok:
+            try:
+                rospy.wait_for_message(
+                    self.camera_stream_topic, CompressedImage, timeout=8.0)
+                frame_ok = True
+            except rospy.ROSException as exc:
+                frame_error = str(exc)
+        ok = node_ok and frame_ok
+        message = '摄像头图像流已就绪' if ok else (
+            '摄像头节点在线但未收到图像' if node_ok else '摄像头启动失败')
+        return self.make_response(req, ok, message, {
+            'exit_code': code,
+            'output': out,
+            'eggy_camera': node_ok,
+            'image_topic': self.camera_stream_topic,
+            'frame_received': frame_ok,
+            'frame_error': frame_error,
         })
 
     def handle_camera_stop(self, req):

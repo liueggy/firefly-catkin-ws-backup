@@ -54,6 +54,16 @@ class LaunchContractTest(unittest.TestCase):
         self.assertIn('legacy_qt_visual_relays" default="false"', system)
         self.assertIn('legacy_qt_camera_relay" default="false"', system)
 
+    def test_camera_start_requires_a_real_frame_on_the_stable_raw_topic(self):
+        command_center = read("scripts/eggy_command_center.py")
+        self.assertIn(
+            "'~camera_stream_topic', '/camera/front/image_source/compressed'",
+            command_center,
+        )
+        self.assertIn("rospy.wait_for_message(", command_center)
+        self.assertIn("self.camera_stream_topic, CompressedImage", command_center)
+        self.assertIn("ok = node_ok and frame_ok", command_center)
+
     def test_meter_input_and_overlay_topics_cannot_form_default_feedback_loop(self):
         root = ET.fromstring(read("launch/eggy_system.launch"))
         args = {item.attrib["name"]: item.attrib.get("default") for item in root.findall("arg")}
