@@ -542,6 +542,20 @@ class EggyCommandCenter:
 
     def _stop_runtime_mode(self):
         """Stop only profile-specific processes; keep the base and ROSBridge alive."""
+        nodes, _publishers = self._runtime_graph_state()
+        graceful_targets = {
+            '/slam_gmapping', '/amcl', '/move_base', '/eggy_camera',
+            '/inspection_servo_route_runner', '/meter_rknn_detect_cpp',
+            '/kimi_inspection_server', '/kimi_inspection_bridge',
+        }.intersection(nodes)
+        graceful_targets.update(
+            name for name in nodes if name.startswith('/map_server'))
+        if graceful_targets:
+            try:
+                rosnode.kill_nodes(sorted(graceful_targets))
+            except Exception:
+                pass
+            time.sleep(0.5)
         patterns = [
             r"[r]oslaunch.*eggy_bringup.*mapping_light\.launch",
             r"[r]oslaunch eggy_bringup move_base_only\.launch",
@@ -565,7 +579,7 @@ class EggyCommandCenter:
             "pkill -KILL -f '%s' 2>/dev/null || true" % pattern
             for pattern in patterns)
         run_cmd(terminate, timeout=3)
-        time.sleep(0.6)
+        time.sleep(0.4)
         run_cmd(force, timeout=3)
         self._purge_runtime_registrations()
 
