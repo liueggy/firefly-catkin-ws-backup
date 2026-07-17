@@ -12,6 +12,7 @@
   <arg name="linear_update" default="0.15" />
   <arg name="angular_update" default="0.15" />
   <arg name="temporal_update" default="1.0" />
+  <arg name="delta" default="0.04" />
   <arg name="save_map" default="true" />
   <arg name="gmapping_quiet" default="false" />
 
@@ -31,5 +32,6 @@
     <param name="gmapping_linear_update" value="$(arg linear_update)" />
     <param name="gmapping_angular_update" value="$(arg angular_update)" />
     <param name="gmapping_temporal_update" value="$(arg temporal_update)" />
+    <param name="gmapping_delta" value="$(arg delta)" />
   </node>
 </launch>

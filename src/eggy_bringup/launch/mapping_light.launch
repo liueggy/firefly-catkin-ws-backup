@@ -11,7 +11,7 @@
   <arg name="ymin" default="-8.0" />
   <arg name="xmax" default="8.0" />
   <arg name="ymax" default="8.0" />
-  <arg name="delta" default="0.05" />
+  <arg name="delta" default="0.04" />
   <arg name="throttle_scans" default="1" />
   <arg name="autosave" default="false" />
   <arg name="autosave_interval" default="45" />

@@ -60,6 +60,7 @@ class LaunchContractTest(unittest.TestCase):
             "linear_update": "0.15",
             "angular_update": "0.15",
             "temporal_update": "1.0",
+            "delta": "0.04",
         }
         for filename, prefix in (
                 ("mapping_light.launch", ""),
@@ -73,6 +74,10 @@ class LaunchContractTest(unittest.TestCase):
             for name, value in expected.items():
                 self.assertEqual(value, defaults[prefix + name],
                                  "%s:%s" % (filename, prefix + name))
+
+    def test_fast_mapping_switch_uses_the_tuned_grid_resolution(self):
+        command_center = read("scripts/eggy_command_center.py")
+        self.assertIn("_delta:=0.04", command_center)
 
     def test_raw_camera_relay_and_legacy_adapter_switch_are_explicit(self):
         system = read("launch/eggy_system.launch")

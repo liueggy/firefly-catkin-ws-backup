@@ -421,16 +421,16 @@ class FastAutoMapper:
         cmd = [
             "rosrun", "gmapping", "slam_gmapping", "scan:=" + scan_topic,
             "_base_frame:=base_link", "_odom_frame:=odom",
-            "_map_update_interval:={}".format(rospy.get_param("~gmapping_map_update_interval", 2.0)),
-            "_linearUpdate:={}".format(rospy.get_param("~gmapping_linear_update", 0.20)),
-            "_angularUpdate:={}".format(rospy.get_param("~gmapping_angular_update", 0.20)),
-            "_temporalUpdate:={}".format(rospy.get_param("~gmapping_temporal_update", 2.0)),
+            "_map_update_interval:={}".format(rospy.get_param("~gmapping_map_update_interval", 1.5)),
+            "_linearUpdate:={}".format(rospy.get_param("~gmapping_linear_update", 0.15)),
+            "_angularUpdate:={}".format(rospy.get_param("~gmapping_angular_update", 0.15)),
+            "_temporalUpdate:={}".format(rospy.get_param("~gmapping_temporal_update", 1.0)),
             "_particles:={}".format(rospy.get_param("~gmapping_particles", 25)),
             "_xmin:={}".format(rospy.get_param("~gmapping_xmin", -12.0)),
             "_ymin:={}".format(rospy.get_param("~gmapping_ymin", -12.0)),
             "_xmax:={}".format(rospy.get_param("~gmapping_xmax", 12.0)),
             "_ymax:={}".format(rospy.get_param("~gmapping_ymax", 12.0)),
-            "_delta:={}".format(rospy.get_param("~gmapping_delta", 0.05)),
+            "_delta:={}".format(rospy.get_param("~gmapping_delta", 0.04)),
         ]
         self.publish_status("starting_gmapping")
         proc = subprocess.Popen(cmd)
