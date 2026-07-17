@@ -709,12 +709,19 @@ class EggyCommandCenter:
             map_ready = bool(publishers.get('/map'))
             processes_alive = all(process.poll() is None for process in processes)
             if mode == 'navigation':
-                ready = map_ready and processes_alive and '/amcl' in nodes
+                ready = map_ready and processes_alive
                 if ready:
-                    ready = self._runtime_node_live('/amcl')
-                if ready:
-                    status.update({'mode': expected, 'state': 'ready',
-                                   'map_ready': True})
+                    status.update({
+                        'mode': expected,
+                        'state': (
+                            'ready'
+                            if '/amcl' in nodes and '/move_base' in nodes
+                            else 'starting'
+                        ),
+                        'map_ready': True,
+                        'amcl_process_alive': True,
+                        'move_base_process_alive': True,
+                    })
                     return True, status
             else:
                 ready = map_ready and processes_alive and '/slam_gmapping' in nodes
@@ -889,7 +896,7 @@ class EggyCommandCenter:
                     'map_file': map_file,
                     'restart': False,
                     'accepted': True,
-                    'state': 'ready' if ok else 'degraded',
+                    'state': status.get('state', 'ready') if ok else 'degraded',
                     'status': status,
                 })
         finally:
