@@ -17,6 +17,6 @@
     <arg name="use_inspection_servo_route" value="true" />
     <!-- This lightweight profile has no RKNN/Kimi capabilities. -->
     <arg name="mission_inspection_capable" value="false" />
-    <arg name="use_voice_controller" value="false" />
+    <arg name="use_voice_controller" value="true" />
   </include>
 </launch>

@@ -384,6 +384,12 @@ class VoiceController(object):
             return []
 
     def start_route(self, inspection, point_index=None, return_home=False):
+        profile = str(self.profile_status.get("profile", ""))
+        allowed = profile == "inspection" if inspection else profile in (
+            "navigation", "inspection")
+        if not allowed:
+            self.play(BROADCAST["cannot_execute"])
+            return
         route = self.load_voice_route()
         if point_index is not None:
             route = route[point_index:point_index + 1]
@@ -404,6 +410,9 @@ class VoiceController(object):
         self.play(BROADCAST["inspection_started" if inspection else "route_started"])
 
     def start_home(self):
+        if self.profile_status.get("profile") not in ("navigation", "inspection"):
+            self.play(BROADCAST["cannot_execute"])
+            return
         route = self.load_voice_route()
         home = next((item for item in route if str(item.get("id", "")).lower()
                      in ("home", "start", "origin", "起点")), None)

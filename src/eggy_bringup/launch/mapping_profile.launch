@@ -12,6 +12,6 @@
     <arg name="use_kimi_server" value="false" />
     <arg name="use_kimi_bridge" value="false" />
     <arg name="use_inspection_servo_route" value="false" />
-    <arg name="use_voice_controller" value="false" />
+    <arg name="use_voice_controller" value="true" />
   </include>
 </launch>

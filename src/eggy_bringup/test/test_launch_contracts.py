@@ -29,6 +29,12 @@ class LaunchContractTest(unittest.TestCase):
         self.assertIn('type="cmd_vel_arbiter.py"', system)
         self.assertIn('name="eggy_cmd_vel_arbiter"', system)
 
+    def test_voice_controller_is_enabled_in_every_runtime_profile(self):
+        for name in ("mapping", "navigation", "inspection"):
+            profile = read("launch/%s_profile.launch" % name)
+            self.assertIn('use_voice_controller" value="true"', profile)
+            self.assertNotIn('use_voice_controller" value="false"', profile)
+
     def test_mapping_profile_routes_move_base_through_fail_safe_guard(self):
         profile = read("launch/mapping_profile.launch")
         system = read("launch/eggy_system.launch")
