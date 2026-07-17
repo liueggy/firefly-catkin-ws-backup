@@ -664,7 +664,7 @@ class EggyCommandCenter:
             '_max_det:=2 _frame_skip:=2',
             '/tmp/eggy_mode_switch_meter.log')
         self._launch_detached(
-            'KIMI_ENV_FILE=/root/.config/kimi_inspection.env '
+            'env KIMI_ENV_FILE=/root/.config/kimi_inspection.env '
             '/root/catkin_ws/devel/lib/eggy_bringup/kimi_inspection_server.py '
             '__name:=kimi_inspection_server',
             '/tmp/eggy_mode_switch_kimi_server.log')
