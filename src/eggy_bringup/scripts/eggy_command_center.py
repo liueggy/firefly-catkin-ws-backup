@@ -29,7 +29,6 @@ import cv2
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
 from nav_msgs.msg import OccupancyGrid
-from nav_msgs.srv import GetMap
 from std_srvs.srv import Empty
 import dynamic_reconfigure.client
 from eggy_bringup.mode_switch_core import (
@@ -682,7 +681,7 @@ class EggyCommandCenter:
             "exec " + command
         )
         log = open(log_path, 'ab', buffering=0)
-        subprocess.Popen(
+        return subprocess.Popen(
             ['bash', '-lc', wrapped],
             stdin=subprocess.DEVNULL,
             stdout=log,
@@ -692,31 +691,27 @@ class EggyCommandCenter:
             close_fds=True,
         )
 
-    def _wait_mode_ready(self, mode, timeout_sec=4.0):
+    def _wait_mode_ready(self, mode, timeout_sec=4.0, processes=None):
         expected = 'static_nav' if mode == 'navigation' else 'mapping_slam'
         deadline = time.time() + max(0.5, timeout_sec)
         status = {'mode': 'unknown', 'state': 'switching'}
+        processes = list(processes or [])
         while time.time() < deadline and not rospy.is_shutdown():
             nodes, publishers = self._runtime_graph_state()
             map_ready = bool(publishers.get('/map'))
+            processes_alive = all(process.poll() is None for process in processes)
             if mode == 'navigation':
-                ready = map_ready and '/amcl' in nodes and '/move_base' in nodes
+                ready = map_ready and processes_alive and '/amcl' in nodes
                 if ready:
-                    ready = (
-                        self._runtime_node_live('/amcl')
-                        and self._runtime_node_live('/move_base')
-                    )
+                    ready = self._runtime_node_live('/amcl')
                 if ready:
                     status.update({'mode': expected, 'state': 'ready',
                                    'map_ready': True})
                     return True, status
             else:
-                ready = map_ready and '/slam_gmapping' in nodes and '/move_base' in nodes
+                ready = map_ready and processes_alive and '/slam_gmapping' in nodes
                 if ready:
-                    ready = (
-                        self._runtime_node_live('/slam_gmapping')
-                        and self._runtime_node_live('/move_base')
-                    )
+                    ready = self._runtime_node_live('/slam_gmapping')
                 if ready:
                     status.update({'mode': expected, 'state': 'ready',
                                    'map_ready': True})
@@ -740,11 +735,12 @@ class EggyCommandCenter:
             expected_height, expected_width = image.shape[:2]
             expected_resolution = float(config['resolution'])
             deadline = time.time() + timeout_sec
-            actual = {'error': '地图服务尚未就绪'}
+            actual = {'error': '地图话题尚未就绪'}
             while time.time() < deadline and not rospy.is_shutdown():
                 try:
-                    rospy.wait_for_service('/static_map', timeout=0.5)
-                    grid = rospy.ServiceProxy('/static_map', GetMap)().map
+                    grid = rospy.wait_for_message(
+                        '/map', OccupancyGrid,
+                        timeout=min(0.8, max(0.1, deadline - time.time())))
                     actual = {
                         'width': int(grid.info.width),
                         'height': int(grid.info.height),
@@ -775,17 +771,18 @@ class EggyCommandCenter:
         started = time.monotonic()
         self._stop_runtime_mode()
 
+        mode_processes = []
         if mode == 'mapping':
             self._set_runtime_profile('mapping')
             self._configure_runtime_navigation('mapping')
-            self._launch_detached(
+            mode_processes.append(self._launch_detached(
                 'rosrun gmapping slam_gmapping scan:=/scan '
                 '__name:=slam_gmapping',
-                '/tmp/eggy_mode_switch_mapping.log')
-            self._launch_detached(
+                '/tmp/eggy_mode_switch_mapping.log'))
+            mode_processes.append(self._launch_detached(
                 'rosrun move_base move_base cmd_vel:=/cmd_vel/mapping_raw '
                 'move_base_simple/goal:=/nav_goal __name:=move_base',
-                '/tmp/eggy_mode_switch_movebase.log')
+                '/tmp/eggy_mode_switch_movebase.log'))
         else:
             quoted_map = shlex.quote(map_file)
             self._set_runtime_profile(profile, map_file)
@@ -793,24 +790,25 @@ class EggyCommandCenter:
             self._launch_detached(
                 'rosrun map_server map_server ' + quoted_map,
                 '/tmp/eggy_mode_switch_mapserver.log')
-            map_ok, map_details = self._wait_map_matches(map_file, timeout_sec=8.0)
+            map_ok, map_details = self._wait_map_matches(map_file, timeout_sec=4.0)
             if not map_ok:
                 return False, {
                     'mode': 'unknown',
                     'map_ready': False,
                     'map_details': map_details,
                 }
-            self._launch_detached(
+            mode_processes.append(self._launch_detached(
                 'rosrun amcl amcl scan:=/scan __name:=amcl',
-                '/tmp/eggy_mode_switch_amcl.log')
-            self._launch_detached(
+                '/tmp/eggy_mode_switch_amcl.log'))
+            mode_processes.append(self._launch_detached(
                 'rosrun move_base move_base cmd_vel:=/cmd_vel/navigation '
                 'move_base_simple/goal:=/nav_goal __name:=move_base',
-                '/tmp/eggy_mode_switch_movebase.log')
+                '/tmp/eggy_mode_switch_movebase.log'))
             self._launch_runtime_support(profile)
 
         expected = 'static_nav' if mode == 'navigation' else 'mapping_slam'
-        ok, status = self._wait_mode_ready(mode, timeout_sec=7.0)
+        ok, status = self._wait_mode_ready(
+            mode, timeout_sec=7.0, processes=mode_processes)
         if ok and status.get('mode') != expected:
             status['mode'] = expected
         status['profile'] = profile
