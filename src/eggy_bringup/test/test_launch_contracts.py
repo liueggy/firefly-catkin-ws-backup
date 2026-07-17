@@ -137,6 +137,7 @@ class LaunchContractTest(unittest.TestCase):
             "    def handle_switch_nav_mode(", 1)[0]
         self.assertNotIn("eggy-stack-start", fast_switch)
         self.assertNotIn("_cleanup_ros_master()", fast_switch)
+        self.assertIn("_stop_runtime_mode()", fast_switch)
         self.assertIn("_wait_map_matches", fast_switch)
         self.assertIn("_wait_mode_ready", fast_switch)
 

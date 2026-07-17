@@ -490,6 +490,54 @@ class EggyCommandCenter:
         except Exception:
             return False
 
+    def _purge_runtime_registrations(self):
+        """Remove only dead mode-node registrations without a global cleanup."""
+        master = rosgraph.Master('/eggy_command_center_switch')
+        try:
+            pubs, subs, srvs = master.getSystemState()
+        except Exception:
+            return
+        registered = set()
+        for _resource, names in pubs + subs + srvs:
+            registered.update(names)
+        exact = {
+            '/slam_gmapping', '/amcl', '/move_base', '/eggy_camera',
+            '/inspection_servo_route_runner', '/meter_rknn_detect_cpp',
+            '/kimi_inspection_server', '/kimi_inspection_bridge',
+        }
+        targets = exact.intersection(registered)
+        targets.update(
+            name for name in registered if name.startswith('/map_server'))
+        node_uris = {}
+        for name in targets:
+            try:
+                node_uris[name] = master.lookupNode(name)
+            except Exception:
+                pass
+        for topic, names in pubs:
+            for name in targets.intersection(names):
+                uri = node_uris.get(name)
+                if uri:
+                    try:
+                        master.unregisterPublisher(topic, uri)
+                    except Exception:
+                        pass
+        for topic, names in subs:
+            for name in targets.intersection(names):
+                uri = node_uris.get(name)
+                if uri:
+                    try:
+                        master.unregisterSubscriber(topic, uri)
+                    except Exception:
+                        pass
+        for service, names in srvs:
+            for name in targets.intersection(names):
+                try:
+                    master.unregisterService(
+                        service, master.lookupService(service))
+                except Exception:
+                    pass
+
     def _stop_runtime_mode(self):
         """Stop only profile-specific processes; keep the base and ROSBridge alive."""
         patterns = [
@@ -517,6 +565,7 @@ class EggyCommandCenter:
         run_cmd(terminate, timeout=3)
         time.sleep(0.6)
         run_cmd(force, timeout=3)
+        self._purge_runtime_registrations()
 
     def _set_runtime_profile(self, profile, map_file=""):
         namespace = '/eggy_nav_mode_status'
