@@ -31,6 +31,11 @@ from nav_msgs.msg import OccupancyGrid
 from nav_msgs.srv import GetMap
 from std_srvs.srv import Empty
 import dynamic_reconfigure.client
+from eggy_bringup.mode_switch_core import (
+    SwitchGate,
+    activate_map_directory,
+    restore_map_directory,
+)
 
 
 KNOWN_NODES = [
@@ -145,6 +150,7 @@ class EggyCommandCenter:
         self.camera_stream_topic = rospy.get_param(
             '~camera_stream_topic', '/camera/front/image_source/compressed')
         self.last_status = {}
+        self.mode_switch_gate = SwitchGate()
         rospy.loginfo('eggy_command_center started: request=/eggy/command/request response=/eggy/command/response status=/eggy/command/status')
 
     def on_profile_status(self, msg):
@@ -458,6 +464,70 @@ class EggyCommandCenter:
         """Remove stale node registrations left in ROS master after process kills."""
         run_cmd("yes y | rosnode cleanup >/tmp/eggy_rosnode_cleanup.log 2>&1 || true", timeout=8)
 
+    def _runtime_graph_state(self):
+        """Read nodes and publishers with one ROS master round trip."""
+        try:
+            pubs, subs, srvs = rosgraph.Master(
+                '/eggy_command_center_switch').getSystemState()
+            nodes = set()
+            publishers = {}
+            for topic, names in pubs:
+                publishers[topic] = list(names)
+                nodes.update(names)
+            for _topic, names in subs:
+                nodes.update(names)
+            for _service, names in srvs:
+                nodes.update(names)
+            return nodes, publishers
+        except Exception:
+            return set(rosnode_list()), {}
+
+    def _stop_runtime_mode(self):
+        """Stop only profile-specific processes; keep the base and ROSBridge alive."""
+        patterns = [
+            r"[r]oslaunch.*eggy_bringup.*mapping_light\.launch",
+            r"[r]oslaunch eggy_bringup move_base_only\.launch",
+            r"[r]oslaunch eggy_bringup move_base_nav\.launch",
+            r"[r]oslaunch eggy_bringup amcl\.launch",
+            r"[r]oslaunch eggy_bringup runtime_profile_support\.launch",
+            r"/opt/ros/noetic/lib/gmapping/[s]lam_gmapping",
+            r"/opt/ros/noetic/lib/map_server/[m]ap_server",
+            r"/opt/ros/noetic/lib/amcl/[a]mcl",
+            r"/opt/ros/noetic/lib/move_base/[m]ove_base",
+            r"[e]ggy_camera_node\.py",
+            r"[i]nspection_servo_route_runner\.py",
+            r"[m]eter_rknn_detect_node",
+            r"[k]imi_inspection_server\.py",
+            r"[k]imi_inspection_bridge\.py",
+        ]
+        terminate = "; ".join(
+            "pkill -TERM -f '%s' 2>/dev/null || true" % pattern
+            for pattern in patterns)
+        force = "; ".join(
+            "pkill -KILL -f '%s' 2>/dev/null || true" % pattern
+            for pattern in patterns)
+        run_cmd(terminate, timeout=3)
+        time.sleep(0.6)
+        run_cmd(force, timeout=3)
+
+    def _set_runtime_profile(self, profile, map_file=""):
+        namespace = '/eggy_nav_mode_status'
+        rospy.set_param(namespace + '/profile', profile)
+        rospy.set_param(namespace + '/use_mapping', profile == 'mapping')
+        rospy.set_param(namespace + '/use_amcl', profile != 'mapping')
+        rospy.set_param(namespace + '/use_navigation', True)
+        if map_file:
+            rospy.set_param(namespace + '/map_file', map_file)
+
+    def _launch_runtime_support(self, profile):
+        if profile == 'mapping':
+            return
+        inspection = 'true' if profile == 'inspection' else 'false'
+        self._launch_detached(
+            'roslaunch eggy_bringup runtime_profile_support.launch inspection:=' +
+            inspection,
+            '/tmp/eggy_mode_switch_support.log')
+
     def _launch_detached(self, command, log_path):
         """Launch a ROS command outside run_cmd's timeout-managed process group."""
         env = os.environ.copy()
@@ -481,24 +551,26 @@ class EggyCommandCenter:
     def _wait_mode_ready(self, mode, timeout_sec=4.0):
         expected = 'static_nav' if mode == 'navigation' else 'mapping_slam'
         deadline = time.time() + max(0.5, timeout_sec)
-        status = self.build_status()
+        status = {'mode': 'unknown', 'state': 'switching'}
         while time.time() < deadline and not rospy.is_shutdown():
-            status = self.build_status()
-            if status.get('mode') == expected:
-                return True, status
+            nodes, publishers = self._runtime_graph_state()
+            map_ready = bool(publishers.get('/map'))
             if mode == 'navigation':
-                map_info = (status.get('topics') or {}).get('/map') or {}
-                nodes = status.get('nodes') or {}
-                if map_info.get('has_publisher') and nodes.get('/amcl', False):
-                    status['mode'] = 'static_nav'
+                ready = map_ready and '/amcl' in nodes and '/move_base' in nodes
+                if ready:
+                    status.update({'mode': expected, 'state': 'ready',
+                                   'map_ready': True})
                     return True, status
-            elif mode == 'mapping':
-                nodes = status.get('nodes') or {}
-                if nodes.get('/slam_gmapping', False):
-                    status['mode'] = 'mapping_slam'
+            else:
+                ready = map_ready and '/slam_gmapping' in nodes and '/move_base' in nodes
+                if ready:
+                    status.update({'mode': expected, 'state': 'ready',
+                                   'map_ready': True})
                     return True, status
-            time.sleep(0.25)
-        return status.get('mode') == expected, status
+            time.sleep(0.15)
+        status.update({'mode': 'unknown', 'state': 'degraded',
+                       'map_ready': False})
+        return False, status
 
     def _wait_map_matches(self, yaml_path, timeout_sec=6.0):
         """Wait until /static_map serves the exact selected map metadata."""
@@ -513,48 +585,44 @@ class EggyCommandCenter:
                 return False, {'error': '地图图像无法读取'}
             expected_height, expected_width = image.shape[:2]
             expected_resolution = float(config['resolution'])
-            rospy.wait_for_service('/static_map', timeout=timeout_sec)
-            grid = rospy.ServiceProxy('/static_map', GetMap)().map
-            actual = {
-                'width': int(grid.info.width),
-                'height': int(grid.info.height),
-                'resolution': float(grid.info.resolution),
-                'frame_id': grid.header.frame_id,
-            }
-            matched = (
-                actual['width'] == expected_width and
-                actual['height'] == expected_height and
-                abs(actual['resolution'] - expected_resolution) <= 1e-6 and
-                actual['frame_id'] == 'map'
-            )
-            return matched, actual
+            deadline = time.time() + timeout_sec
+            actual = {'error': '地图服务尚未就绪'}
+            while time.time() < deadline and not rospy.is_shutdown():
+                try:
+                    rospy.wait_for_service('/static_map', timeout=0.5)
+                    grid = rospy.ServiceProxy('/static_map', GetMap)().map
+                    actual = {
+                        'width': int(grid.info.width),
+                        'height': int(grid.info.height),
+                        'resolution': float(grid.info.resolution),
+                        'frame_id': grid.header.frame_id,
+                    }
+                    matched = (
+                        actual['width'] == expected_width and
+                        actual['height'] == expected_height and
+                        abs(actual['resolution'] - expected_resolution) <= 1e-6 and
+                        actual['frame_id'] == 'map'
+                    )
+                    if matched:
+                        return True, actual
+                except Exception as exc:
+                    actual = {'error': str(exc)}
+                time.sleep(0.1)
+            return False, actual
         except Exception as exc:
             return False, {'error': str(exc)}
 
-    def switch_mode_fast(self, mode, map_file=None):
+    def switch_mode_fast(self, mode, map_file=None, profile=None):
         if mode not in ('mapping', 'navigation'):
             raise ValueError('unsupported mode')
         if mode == 'navigation' and not map_file:
             raise ValueError('map_file is required for navigation')
-
-        stop_patterns = [
-            r"roslaunch.*eggy_bringup.*mapping_light\.launch",
-            r"roslaunch eggy_bringup move_base_only.launch",
-            r"roslaunch eggy_bringup move_base_nav.launch",
-            r"roslaunch eggy_bringup amcl.launch",
-        ]
-        exact_names = ['slam_gmapping', 'map_server', 'amcl', 'move_base']
-        for pat in stop_patterns:
-            run_cmd("pkill -TERM -f '" + pat + "' 2>/dev/null || true", timeout=2)
-        self._kill_by_names(exact_names, timeout_sec=2.0)
-        for pat in stop_patterns:
-            self._wait_pid_gone(pat, 3.0)
-        for pat in stop_patterns:
-            run_cmd("pkill -KILL -f '" + pat + "' 2>/dev/null || true", timeout=2)
-        self._kill_by_names(exact_names, timeout_sec=0.5)
-        self._cleanup_ros_master()
+        profile = profile or ('mapping' if mode == 'mapping' else 'navigation')
+        started = time.monotonic()
+        self._stop_runtime_mode()
 
         if mode == 'mapping':
+            self._set_runtime_profile('mapping')
             self._launch_detached(
                 'roslaunch eggy_bringup mapping_light.launch scan_topic:=/scan base_frame:=base_link odom_frame:=odom',
                 '/tmp/eggy_mode_switch_mapping.log')
@@ -563,10 +631,11 @@ class EggyCommandCenter:
                 '/tmp/eggy_mode_switch_movebase.log')
         else:
             quoted_map = shlex.quote(map_file)
+            self._set_runtime_profile(profile, map_file)
             self._launch_detached(
                 'rosrun map_server map_server ' + quoted_map,
                 '/tmp/eggy_mode_switch_mapserver.log')
-            map_ok, map_details = self._wait_map_matches(map_file, timeout_sec=6.0)
+            map_ok, map_details = self._wait_map_matches(map_file, timeout_sec=4.0)
             if not map_ok:
                 return False, {
                     'mode': 'unknown',
@@ -576,20 +645,17 @@ class EggyCommandCenter:
             self._launch_detached(
                 'roslaunch eggy_bringup amcl.launch scan_topic:=/scan odom_frame_id:=odom base_frame_id:=base_link map:=/map',
                 '/tmp/eggy_mode_switch_amcl.log')
-            ok, _status = self._wait_mode_ready('navigation', timeout_sec=2.0)
             self._launch_detached(
                 'roslaunch eggy_bringup move_base_nav.launch',
                 '/tmp/eggy_mode_switch_movebase.log')
+            self._launch_runtime_support(profile)
 
-        time.sleep(0.5)
-        self._cleanup_ros_master()
         expected = 'static_nav' if mode == 'navigation' else 'mapping_slam'
-        ok, status = self._wait_mode_ready(mode, timeout_sec=4.0)
-        if mode == 'mapping' and status.get('mode') == 'unknown':
-            status['mode'] = self.last_status.get('mode', 'mapping_slam') if hasattr(self, 'last_status') else 'mapping_slam'
-            expected = status['mode']
+        ok, status = self._wait_mode_ready(mode, timeout_sec=7.0)
         if ok and status.get('mode') != expected:
             status['mode'] = expected
+        status['profile'] = profile
+        status['elapsed_sec'] = round(time.monotonic() - started, 3)
         return ok, status
 
     def handle_switch_nav_mode(self, req):
@@ -629,11 +695,11 @@ class EggyCommandCenter:
                 map_file = active_yaml
             else:
                 return self.make_response(req, False, '尚未激活地图，请先从 Qt 顶部“打开地图”')
-
-        args = ['--' + ('amcl' if profile == 'navigation' else profile)]
-        if map_file:
-            args.extend(['--map', shlex.quote(map_file)])
-        command = '/usr/local/bin/eggy-stack-start ' + ' '.join(args)
+        if not self.mode_switch_gate.try_begin(req.get('request_id', '')):
+            return self.make_response(req, False, '模式切换正在进行，请等待当前操作完成', {
+                'busy': True,
+                'active_request_id': self.mode_switch_gate.owner,
+            })
         transition = self.build_status()
         transition.update({
             'state': 'switching',
@@ -644,14 +710,23 @@ class EggyCommandCenter:
         self.pub_status.publish(String(json.dumps(transition, ensure_ascii=False)))
         rospy.loginfo('profile switch accepted: request_id=%s profile=%s map=%s',
                       req.get('request_id', ''), profile, map_file or '-')
-        self._launch_detached(command, '/tmp/eggy_profile_switch.log')
-        return self.make_response(req, True, '已请求切换运行 profile，等待节点重新上线', {
-            'requested_profile': profile,
-            'map_file': map_file,
-            'restart': True,
-            'accepted': True,
-            'state': 'switching',
-        })
+        try:
+            mode = 'mapping' if profile == 'mapping' else 'navigation'
+            ok, status = self.switch_mode_fast(
+                mode, map_file=map_file or None, profile=profile)
+            return self.make_response(
+                req, ok,
+                '模式切换完成' if ok else '模式切换失败，请查看阶段详情',
+                {
+                    'requested_profile': profile,
+                    'map_file': map_file,
+                    'restart': False,
+                    'accepted': True,
+                    'state': 'ready' if ok else 'degraded',
+                    'status': status,
+                })
+        finally:
+            self.mode_switch_gate.finish()
 
     def handle_upload_map(self, req):
         params = req.get('params') or {}
@@ -733,14 +808,22 @@ class EggyCommandCenter:
                 'sha256': digest,
             })
 
+        if not self.mode_switch_gate.try_begin(req.get('request_id', '')):
+            return self.make_response(req, False, '模式切换正在进行，请稍后重新打开地图', {
+                'busy': True,
+                'active_request_id': self.mode_switch_gate.owner,
+                'map_id': map_id,
+            })
+        previous_active = ''
+        active_changed = False
         try:
-            ok, status = self.switch_mode_fast("navigation", map_file=yaml_path)
-            if ok:
-                temp_link = ACTIVE_MAP_LINK + '.tmp'
-                if os.path.lexists(temp_link):
-                    os.unlink(temp_link)
-                os.symlink(dest_dir, temp_link)
-                os.replace(temp_link, ACTIVE_MAP_LINK)
+            previous_active = activate_map_directory(ACTIVE_MAP_LINK, dest_dir)
+            active_changed = True
+            ok, status = self.switch_mode_fast(
+                "navigation", map_file=yaml_path, profile="navigation")
+            if not ok:
+                restore_map_directory(ACTIVE_MAP_LINK, previous_active)
+                active_changed = False
             return self.make_response(req, ok, '已上传地图并切到 AMCL 导航模式' if ok else '地图上传成功，但切换导航模式失败', {
                 'yaml': yaml_path,
                 'pgm': pgm_path,
@@ -750,11 +833,15 @@ class EggyCommandCenter:
                 'status': status,
             })
         except Exception as exc:
+            if active_changed:
+                restore_map_directory(ACTIVE_MAP_LINK, previous_active)
             return self.make_response(req, False, '地图上传后切导航模式失败', {
                 'yaml': yaml_path,
                 'pgm': pgm_path,
                 'error': str(exc),
             })
+        finally:
+            self.mode_switch_gate.finish()
 
     def handle_get_param(self, req):
         params = req.get('params') or {}

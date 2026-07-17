@@ -55,6 +55,15 @@ class EggyNavModeStatus(object):
         self.pub = rospy.Publisher(self.status_topic, String, queue_size=1, latch=True)
 
     def build_status(self):
+        # Runtime profile switches update these private parameters without
+        # restarting the persistent base stack.
+        self.profile = str(rospy.get_param("~profile", self.profile)).strip().lower()
+        self.use_mapping = _as_bool(
+            rospy.get_param("~use_mapping", self.use_mapping))
+        self.use_amcl = _as_bool(rospy.get_param("~use_amcl", self.use_amcl))
+        self.use_navigation = _as_bool(
+            rospy.get_param("~use_navigation", self.use_navigation))
+        self.map_file = rospy.get_param("~map_file", self.map_file)
         try:
             nodes = set(rosnode.get_node_names())
         except rosnode.ROSNodeIOException:

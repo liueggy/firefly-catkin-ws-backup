@@ -103,6 +103,43 @@ class LaunchContractTest(unittest.TestCase):
         self.assertEqual("$(arg meter_image_topic)", params["image_topic"])
         self.assertEqual("$(arg meter_overlay_topic)", params["overlay_comp_topic"])
 
+    def test_runtime_profile_support_matches_navigation_and_inspection_contracts(self):
+        root = ET.fromstring(read("launch/runtime_profile_support.launch"))
+        camera = root.find(".//node[@name='eggy_camera']")
+        runner = root.find(".//node[@name='inspection_servo_route_runner']")
+        inspection_group = root.find(".//group[@if='$(arg inspection)']")
+        self.assertIsNotNone(camera)
+        self.assertIsNotNone(runner)
+        self.assertIsNotNone(inspection_group)
+        camera_params = {
+            item.attrib["name"]: item.attrib["value"]
+            for item in camera.findall("param")
+        }
+        self.assertEqual(
+            "/camera/front/image_source/compressed",
+            camera_params["compressed_topic"],
+        )
+        inspection_nodes = {
+            item.attrib["name"] for item in inspection_group.findall("node")
+        }
+        self.assertEqual(
+            {
+                "meter_rknn_detect_cpp",
+                "kimi_inspection_server",
+                "kimi_inspection_bridge",
+            },
+            inspection_nodes,
+        )
+
+    def test_fast_profile_switch_preserves_the_persistent_base_stack(self):
+        source = read("scripts/eggy_command_center.py")
+        fast_switch = source.split("    def switch_mode_fast(", 1)[1].split(
+            "    def handle_switch_nav_mode(", 1)[0]
+        self.assertNotIn("eggy-stack-start", fast_switch)
+        self.assertNotIn("_cleanup_ros_master()", fast_switch)
+        self.assertIn("_wait_map_matches", fast_switch)
+        self.assertIn("_wait_mode_ready", fast_switch)
+
 
 if __name__ == "__main__":
     unittest.main()

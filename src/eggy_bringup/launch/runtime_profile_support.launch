@@ -1,0 +1,54 @@
+<launch>
+  <!-- Mode-specific services launched without restarting the persistent base stack. -->
+  <arg name="inspection" default="false" />
+  <arg name="camera_device" default="/dev/orbbec_rgb23" />
+  <arg name="camera_fps" default="10" />
+  <arg name="meter_model_path" default="/root/meter/best_raw_head_int8_toolkit150.rknn" />
+
+  <node pkg="eggy_bringup" type="eggy_camera_node.py" name="eggy_camera"
+        output="screen">
+    <param name="device" value="$(arg camera_device)" />
+    <param name="width" value="1280" />
+    <param name="height" value="720" />
+    <param name="fps" value="$(arg camera_fps)" />
+    <param name="pixel_format" value="mjpg" />
+    <param name="mjpeg_passthrough" value="true" />
+    <param name="compressed_topic" value="/camera/front/image_source/compressed" />
+  </node>
+
+  <node pkg="eggy_bringup" type="inspection_servo_route_runner.py"
+        name="inspection_servo_route_runner" output="screen">
+    <param name="dry_run" value="false" />
+    <param name="default_frame" value="map" />
+    <param name="base_frame" value="base_link" />
+    <param name="inspection_capable" value="$(arg inspection)" />
+    <param name="cmd_vel_topic" value="/cmd_vel/mission" />
+    <param name="enable_kimi_after_search" value="$(arg inspection)" />
+  </node>
+
+  <group if="$(arg inspection)">
+    <node pkg="eggy_bringup" type="meter_rknn_detect_node"
+          name="meter_rknn_detect_cpp" output="screen">
+      <param name="model_path" value="$(arg meter_model_path)" />
+      <param name="image_topic" value="/camera/front/image_source/compressed" />
+      <param name="overlay_comp_topic" value="/camera/front/image/compressed" />
+      <param name="result_topic" value="/meter/detection" />
+      <param name="conf" value="0.50" />
+      <param name="nms" value="0.45" />
+      <param name="max_det" value="2" />
+      <param name="frame_skip" value="2" />
+    </node>
+    <node pkg="eggy_bringup" type="kimi_inspection_server.py"
+          name="kimi_inspection_server" output="screen">
+      <env name="KIMI_ENV_FILE" value="/root/.config/kimi_inspection.env" />
+    </node>
+    <node pkg="eggy_bringup" type="kimi_inspection_bridge.py"
+          name="kimi_inspection_bridge" output="screen">
+      <param name="image_topic" value="/camera/front/image_source/compressed" />
+      <param name="api_base" value="http://127.0.0.1:8000" />
+      <param name="default_task" value="meter" />
+      <param name="timeout" value="60.0" />
+      <param name="max_image_age" value="1.5" />
+    </node>
+  </group>
+</launch>
