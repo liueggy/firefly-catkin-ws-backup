@@ -592,14 +592,82 @@ class EggyCommandCenter:
         if map_file:
             rospy.set_param(namespace + '/map_file', map_file)
 
+    @staticmethod
+    def _configure_runtime_navigation(mode):
+        navigation = mode == 'navigation'
+        rospy.set_param('/move_base/base_local_planner',
+                        'teb_local_planner/TebLocalPlannerROS')
+        rospy.set_param('/move_base/base_global_planner', 'navfn/NavfnROS')
+        rospy.set_param('/move_base/controller_frequency',
+                        12.0 if navigation else 10.0)
+        rospy.set_param('/move_base/planner_frequency',
+                        1.0 if navigation else 1.5)
+        rospy.set_param('/move_base/global_costmap/static_map', navigation)
+        rospy.set_param('/move_base/global_costmap/rolling_window', False)
+        if not navigation:
+            return
+        amcl = {
+            'odom_frame_id': 'odom',
+            'base_frame_id': 'base_link',
+            'global_frame_id': 'map',
+            'use_map_topic': True,
+            'odom_model_type': 'omni',
+            'min_particles': 100,
+            'max_particles': 500,
+            'update_min_d': 0.10,
+            'update_min_a': 0.20,
+            'laser_max_range': 8.0,
+            'laser_min_range': 0.15,
+            'laser_max_beams': 60,
+            'transform_tolerance': 0.35,
+            'initial_pose_x': 0.0,
+            'initial_pose_y': 0.0,
+            'initial_pose_a': 0.0,
+        }
+        for key, value in amcl.items():
+            rospy.set_param('/amcl/' + key, value)
+
     def _launch_runtime_support(self, profile):
         if profile == 'mapping':
             return
+        self._launch_detached(
+            'rosrun eggy_bringup eggy_camera_node.py __name:=eggy_camera '
+            '_device:=/dev/orbbec_rgb23 _width:=1280 _height:=720 _fps:=10 '
+            '_pixel_format:=mjpg _mjpeg_passthrough:=true '
+            '_compressed_topic:=/camera/front/image_source/compressed',
+            '/tmp/eggy_mode_switch_support.log')
         inspection = 'true' if profile == 'inspection' else 'false'
         self._launch_detached(
-            'roslaunch eggy_bringup runtime_profile_support.launch inspection:=' +
+            'rosrun eggy_bringup inspection_servo_route_runner.py '
+            '__name:=inspection_servo_route_runner _dry_run:=false '
+            '_default_frame:=map _base_frame:=base_link '
+            '_inspection_capable:=' + inspection +
+            ' _cmd_vel_topic:=/cmd_vel/mission _enable_kimi_after_search:=' +
             inspection,
-            '/tmp/eggy_mode_switch_support.log')
+            '/tmp/eggy_mode_switch_runner.log')
+        if profile != 'inspection':
+            return
+        self._launch_detached(
+            'rosrun eggy_bringup meter_rknn_detect_node '
+            '__name:=meter_rknn_detect_cpp '
+            '_model_path:=/root/meter/best_raw_head_int8_toolkit150.rknn '
+            '_image_topic:=/camera/front/image_source/compressed '
+            '_overlay_comp_topic:=/camera/front/image/compressed '
+            '_result_topic:=/meter/detection _conf:=0.50 _nms:=0.45 '
+            '_max_det:=2 _frame_skip:=2',
+            '/tmp/eggy_mode_switch_meter.log')
+        self._launch_detached(
+            'KIMI_ENV_FILE=/root/.config/kimi_inspection.env '
+            'rosrun eggy_bringup kimi_inspection_server.py '
+            '__name:=kimi_inspection_server',
+            '/tmp/eggy_mode_switch_kimi_server.log')
+        self._launch_detached(
+            'rosrun eggy_bringup kimi_inspection_bridge.py '
+            '__name:=kimi_inspection_bridge '
+            '_image_topic:=/camera/front/image_source/compressed '
+            '_api_base:=http://127.0.0.1:8000 _default_task:=meter '
+            '_timeout:=60.0 _max_image_age:=1.5',
+            '/tmp/eggy_mode_switch_kimi_bridge.log')
 
     def _launch_detached(self, command, log_path):
         """Launch a ROS command outside run_cmd's timeout-managed process group."""
@@ -709,15 +777,19 @@ class EggyCommandCenter:
 
         if mode == 'mapping':
             self._set_runtime_profile('mapping')
+            self._configure_runtime_navigation('mapping')
             self._launch_detached(
-                'roslaunch eggy_bringup mapping_light.launch scan_topic:=/scan base_frame:=base_link odom_frame:=odom',
+                'rosrun gmapping slam_gmapping scan:=/scan '
+                '__name:=slam_gmapping',
                 '/tmp/eggy_mode_switch_mapping.log')
             self._launch_detached(
-                'roslaunch eggy_bringup move_base_only.launch',
+                'rosrun move_base move_base cmd_vel:=/cmd_vel/mapping_raw '
+                'move_base_simple/goal:=/nav_goal __name:=move_base',
                 '/tmp/eggy_mode_switch_movebase.log')
         else:
             quoted_map = shlex.quote(map_file)
             self._set_runtime_profile(profile, map_file)
+            self._configure_runtime_navigation('navigation')
             self._launch_detached(
                 'rosrun map_server map_server ' + quoted_map,
                 '/tmp/eggy_mode_switch_mapserver.log')
@@ -729,10 +801,11 @@ class EggyCommandCenter:
                     'map_details': map_details,
                 }
             self._launch_detached(
-                'roslaunch eggy_bringup amcl.launch scan_topic:=/scan odom_frame_id:=odom base_frame_id:=base_link map:=/map',
+                'rosrun amcl amcl scan:=/scan __name:=amcl',
                 '/tmp/eggy_mode_switch_amcl.log')
             self._launch_detached(
-                'roslaunch eggy_bringup move_base_nav.launch',
+                'rosrun move_base move_base cmd_vel:=/cmd_vel/navigation '
+                'move_base_simple/goal:=/nav_goal __name:=move_base',
                 '/tmp/eggy_mode_switch_movebase.log')
             self._launch_runtime_support(profile)
 
