@@ -10,6 +10,7 @@ software emergency stop.
 
 import copy
 import json
+import math
 import os
 import threading
 import time
@@ -30,19 +31,37 @@ from eggy_bringup.voice_protocol import (
     select_battery_broadcast,
     select_profile_broadcast,
 )
+from eggy_bringup.voice_motion import (
+    bounded_speed,
+    normalize_angle,
+    projected_progress,
+    target_reached,
+)
 
 
 class VoiceController(object):
     def __init__(self):
         rospy.init_node("eggy_voice_controller")
         self.lock = threading.RLock()
-        self.forward_speed = float(rospy.get_param("~forward_speed", 0.16))
-        self.backward_speed = float(rospy.get_param("~backward_speed", 0.12))
-        self.lateral_speed = float(rospy.get_param("~lateral_speed", 0.12))
-        self.rotate_speed = float(rospy.get_param("~rotate_speed", 0.35))
-        self.linear_duration = float(rospy.get_param("~linear_duration", 0.55))
-        self.lateral_duration = float(rospy.get_param("~lateral_duration", 0.45))
-        self.rotate_duration = float(rospy.get_param("~rotate_duration", 0.55))
+        self.forward_speed = float(rospy.get_param("~forward_speed", 0.22))
+        self.backward_speed = float(rospy.get_param("~backward_speed", 0.18))
+        self.lateral_speed = float(rospy.get_param("~lateral_speed", 0.18))
+        self.rotate_speed = float(rospy.get_param("~rotate_speed", 0.55))
+        self.forward_distance = float(rospy.get_param("~forward_distance", 0.30))
+        self.backward_distance = float(rospy.get_param("~backward_distance", 0.25))
+        self.lateral_distance = float(rospy.get_param("~lateral_distance", 0.25))
+        self.rotate_angle = math.radians(
+            float(rospy.get_param("~rotate_angle_deg", 30.0)))
+        self.min_linear_speed = float(rospy.get_param("~min_linear_speed", 0.07))
+        self.min_angular_speed = float(rospy.get_param("~min_angular_speed", 0.15))
+        self.linear_kp = float(rospy.get_param("~linear_kp", 1.2))
+        self.angular_kp = float(rospy.get_param("~angular_kp", 1.8))
+        self.heading_kp = float(rospy.get_param("~heading_kp", 1.5))
+        self.max_heading_speed = float(rospy.get_param("~max_heading_speed", 0.25))
+        self.linear_tolerance = float(rospy.get_param("~linear_tolerance", 0.025))
+        self.angular_tolerance = math.radians(
+            float(rospy.get_param("~angular_tolerance_deg", 2.5)))
+        self.motion_timeout = float(rospy.get_param("~motion_timeout", 5.0))
         self.sensor_timeout = float(rospy.get_param("~sensor_timeout", 1.0))
         self.camera_timeout = float(rospy.get_param("~camera_timeout", 2.0))
         self.route_file = rospy.get_param(
@@ -68,13 +87,13 @@ class VoiceController(object):
         self.active_recognition_id = ""
         self.last_scan_time = 0.0
         self.last_odom_time = 0.0
+        self.odom_pose = None
         self.last_camera_time = 0.0
         self.last_result_broadcast = BROADCAST["voice_ready"]
         self.last_auto_state = ""
         self.last_mission_state = ""
         self.motion_timer = None
-        self.stop_timer = None
-        self.motion_twist = Twist()
+        self.motion_state = None
         self.tf_listener = tf.TransformListener()
 
         self.cmd_pub = rospy.Publisher(
@@ -103,7 +122,7 @@ class VoiceController(object):
         rospy.Subscriber("/eggy/mission/status", String, self.on_mission_status, queue_size=10)
         rospy.Subscriber("/eggy/mission/result", String, self.on_mission_result, queue_size=10)
         rospy.Subscriber("/scan", LaserScan, lambda _msg: self._mark("scan"), queue_size=1)
-        rospy.Subscriber("/odom", Odometry, lambda _msg: self._mark("odom"), queue_size=1)
+        rospy.Subscriber("/odom", Odometry, self.on_odom, queue_size=1)
         rospy.Subscriber("/camera/front/image/compressed", CompressedImage,
                          lambda _msg: self._mark("camera"), queue_size=1)
         rospy.on_shutdown(self.shutdown)
@@ -124,6 +143,17 @@ class VoiceController(object):
 
     def _mark(self, name):
         setattr(self, "last_%s_time" % name, time.time())
+
+    def on_odom(self, msg):
+        q = msg.pose.pose.orientation
+        yaw = tf.transformations.euler_from_quaternion((q.x, q.y, q.z, q.w))[2]
+        with self.lock:
+            self.odom_pose = (
+                float(msg.pose.pose.position.x),
+                float(msg.pose.pose.position.y),
+                float(yaw),
+            )
+            self.last_odom_time = time.time()
 
     def play(self, broadcast_id, remember=True):
         if remember:
@@ -296,33 +326,92 @@ class VoiceController(object):
             if self.motion_timer:
                 self.motion_timer.shutdown()
                 self.motion_timer = None
-            if self.stop_timer:
-                self.stop_timer.shutdown()
-                self.stop_timer = None
-            self.motion_twist = Twist()
+            self.motion_state = None
         self.cmd_pub.publish(Twist())
 
-    def start_micro_motion(self, vx, vy, wz, duration):
+    def start_micro_motion(self, axis, target, maximum_speed):
         if not self.safety_allows_motion():
             return
         self.halt_motion()
-        twist = Twist()
-        twist.linear.x, twist.linear.y, twist.angular.z = vx, vy, wz
         with self.lock:
-            self.motion_twist = twist
+            if (self.odom_pose is None or
+                    time.time() - self.last_odom_time > self.sensor_timeout):
+                self.play(BROADCAST["safety_abnormal"])
+                self.publish_status(
+                    "motion_rejected", "里程计未就绪，拒绝执行语音移动",
+                    axis=axis, target=target)
+                return
+            self.motion_state = {
+                "axis": axis,
+                "target": float(target),
+                "maximum_speed": abs(float(maximum_speed)),
+                "start_pose": self.odom_pose,
+                "started_at": time.time(),
+            }
             self.motion_timer = rospy.Timer(rospy.Duration(0.05), self.publish_motion)
-            self.stop_timer = rospy.Timer(rospy.Duration(duration), self.finish_micro_motion, oneshot=True)
         self.play(BROADCAST["accepted"])
+        self.publish_status(
+            "motion_running", "正在执行里程计闭环语音移动",
+            axis=axis, target=target, maximum_speed=maximum_speed)
 
     def publish_motion(self, _event):
         if self.emergency_stop or self.base_stop:
             self.halt_motion()
             return
-        self.cmd_pub.publish(self.motion_twist)
+        with self.lock:
+            state = copy.copy(self.motion_state)
+            pose = self.odom_pose
+            odom_age = time.time() - self.last_odom_time
+        if not state:
+            return
+        if pose is None or odom_age > self.sensor_timeout:
+            self.abort_micro_motion("里程计数据超时", odom_age=odom_age)
+            return
+        elapsed = time.time() - state["started_at"]
+        if elapsed > self.motion_timeout:
+            self.abort_micro_motion("闭环移动超时", elapsed=elapsed)
+            return
 
-    def finish_micro_motion(self, _event=None):
+        axis = state["axis"]
+        progress = projected_progress(axis, state["start_pose"], pose)
+        target = state["target"]
+        tolerance = (self.angular_tolerance if axis == "yaw"
+                     else self.linear_tolerance)
+        if target_reached(target, progress, tolerance):
+            self.finish_micro_motion(axis, target, progress, elapsed)
+            return
+
+        remaining = target - progress
+        twist = Twist()
+        if axis == "yaw":
+            twist.angular.z = bounded_speed(
+                remaining, state["maximum_speed"],
+                self.min_angular_speed, self.angular_kp)
+        else:
+            speed = bounded_speed(
+                remaining, state["maximum_speed"],
+                self.min_linear_speed, self.linear_kp)
+            if axis == "x":
+                twist.linear.x = speed
+            else:
+                twist.linear.y = speed
+            heading_error = normalize_angle(state["start_pose"][2] - pose[2])
+            twist.angular.z = max(
+                -self.max_heading_speed,
+                min(self.max_heading_speed, self.heading_kp * heading_error))
+        self.cmd_pub.publish(twist)
+
+    def abort_micro_motion(self, message, **details):
+        self.halt_motion()
+        self.play(BROADCAST["safety_abnormal"])
+        self.publish_status("motion_aborted", message, **details)
+
+    def finish_micro_motion(self, axis, target, progress, elapsed):
         self.halt_motion()
         self.play(BROADCAST["micro_move_complete"])
+        self.publish_status(
+            "motion_complete", "里程计闭环语音移动完成",
+            axis=axis, target=target, progress=progress, elapsed=elapsed)
 
     def send_command(self, action, success_broadcast=None, params=None, target=""):
         request_id = "voice-%s-%s" % (action, uuid.uuid4().hex[:10])
@@ -528,12 +617,12 @@ class VoiceController(object):
 
     def handle_action(self, action):
         motion = {
-            "move_forward": (self.forward_speed, 0.0, 0.0, self.linear_duration),
-            "move_backward": (-self.backward_speed, 0.0, 0.0, self.linear_duration),
-            "move_left": (0.0, self.lateral_speed, 0.0, self.lateral_duration),
-            "move_right": (0.0, -self.lateral_speed, 0.0, self.lateral_duration),
-            "rotate_left": (0.0, 0.0, self.rotate_speed, self.rotate_duration),
-            "rotate_right": (0.0, 0.0, -self.rotate_speed, self.rotate_duration),
+            "move_forward": ("x", self.forward_distance, self.forward_speed),
+            "move_backward": ("x", -self.backward_distance, self.backward_speed),
+            "move_left": ("y", self.lateral_distance, self.lateral_speed),
+            "move_right": ("y", -self.lateral_distance, self.lateral_speed),
+            "rotate_left": ("yaw", self.rotate_angle, self.rotate_speed),
+            "rotate_right": ("yaw", -self.rotate_angle, self.rotate_speed),
         }
         if action == "emergency_stop":
             self.halt_motion()

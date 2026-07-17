@@ -339,13 +339,22 @@
   <!-- eggy_voice_controller: 语音指令绑定小车控制 -->
   <group if="$(arg use_voice_controller)">
     <node pkg="eggy_bringup" type="eggy_voice_controller.py" name="eggy_voice_controller" output="screen">
-      <param name="forward_speed" value="0.16" />
-      <param name="backward_speed" value="0.12" />
-      <param name="lateral_speed" value="0.12" />
-      <param name="rotate_speed" value="0.35" />
-      <param name="linear_duration" value="0.55" />
-      <param name="lateral_duration" value="0.45" />
-      <param name="rotate_duration" value="0.55" />
+      <param name="forward_speed" value="0.22" />
+      <param name="backward_speed" value="0.18" />
+      <param name="lateral_speed" value="0.18" />
+      <param name="rotate_speed" value="0.55" />
+      <param name="forward_distance" value="0.30" />
+      <param name="backward_distance" value="0.25" />
+      <param name="lateral_distance" value="0.25" />
+      <param name="rotate_angle_deg" value="30.0" />
+      <param name="min_linear_speed" value="0.07" />
+      <param name="min_angular_speed" value="0.15" />
+      <param name="linear_kp" value="1.2" />
+      <param name="angular_kp" value="1.8" />
+      <param name="heading_kp" value="1.5" />
+      <param name="linear_tolerance" value="0.025" />
+      <param name="angular_tolerance_deg" value="2.5" />
+      <param name="motion_timeout" value="5.0" />
       <param name="route_file" value="$(arg voice_route_file)" />
       <param name="default_map_file" value="$(arg map_file)" />
     </node>
