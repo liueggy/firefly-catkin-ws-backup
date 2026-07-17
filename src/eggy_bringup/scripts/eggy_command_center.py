@@ -21,6 +21,7 @@ import socket
 import tempfile
 import uuid
 import yaml
+from concurrent.futures import ThreadPoolExecutor
 
 import rospy
 import rosgraph
@@ -551,7 +552,11 @@ class EggyCommandCenter:
             name for name in nodes if name.startswith('/map_server'))
         if graceful_targets:
             try:
-                rosnode.kill_nodes(sorted(graceful_targets))
+                with ThreadPoolExecutor(
+                        max_workers=min(8, len(graceful_targets))) as executor:
+                    list(executor.map(
+                        lambda name: rosnode.kill_nodes([name]),
+                        sorted(graceful_targets)))
             except Exception:
                 pass
             time.sleep(0.5)
@@ -630,14 +635,17 @@ class EggyCommandCenter:
         if profile == 'mapping':
             return
         self._launch_detached(
-            'rosrun eggy_bringup eggy_camera_node.py __name:=eggy_camera '
+            'python3 /root/catkin_ws/src/eggy_bringup/scripts/'
+            'eggy_camera_node.py '
+            '__name:=eggy_camera '
             '_device:=/dev/orbbec_rgb23 _width:=1280 _height:=720 _fps:=10 '
             '_pixel_format:=mjpg _mjpeg_passthrough:=true '
             '_compressed_topic:=/camera/front/image_source/compressed',
             '/tmp/eggy_mode_switch_support.log')
         inspection = 'true' if profile == 'inspection' else 'false'
         self._launch_detached(
-            'rosrun eggy_bringup inspection_servo_route_runner.py '
+            '/root/catkin_ws/devel/lib/eggy_bringup/'
+            'inspection_servo_route_runner.py '
             '__name:=inspection_servo_route_runner _dry_run:=false '
             '_default_frame:=map _base_frame:=base_link '
             '_inspection_capable:=' + inspection +
@@ -647,7 +655,7 @@ class EggyCommandCenter:
         if profile != 'inspection':
             return
         self._launch_detached(
-            'rosrun eggy_bringup meter_rknn_detect_node '
+            '/root/catkin_ws/devel/lib/eggy_bringup/meter_rknn_detect_node '
             '__name:=meter_rknn_detect_cpp '
             '_model_path:=/root/meter/best_raw_head_int8_toolkit150.rknn '
             '_image_topic:=/camera/front/image_source/compressed '
@@ -657,11 +665,11 @@ class EggyCommandCenter:
             '/tmp/eggy_mode_switch_meter.log')
         self._launch_detached(
             'KIMI_ENV_FILE=/root/.config/kimi_inspection.env '
-            'rosrun eggy_bringup kimi_inspection_server.py '
+            '/root/catkin_ws/devel/lib/eggy_bringup/kimi_inspection_server.py '
             '__name:=kimi_inspection_server',
             '/tmp/eggy_mode_switch_kimi_server.log')
         self._launch_detached(
-            'rosrun eggy_bringup kimi_inspection_bridge.py '
+            '/root/catkin_ws/devel/lib/eggy_bringup/kimi_inspection_bridge.py '
             '__name:=kimi_inspection_bridge '
             '_image_topic:=/camera/front/image_source/compressed '
             '_api_base:=http://127.0.0.1:8000 _default_task:=meter '
@@ -776,11 +784,12 @@ class EggyCommandCenter:
             self._set_runtime_profile('mapping')
             self._configure_runtime_navigation('mapping')
             mode_processes.append(self._launch_detached(
-                'rosrun gmapping slam_gmapping scan:=/scan '
+                '/opt/ros/noetic/lib/gmapping/slam_gmapping scan:=/scan '
                 '__name:=slam_gmapping',
                 '/tmp/eggy_mode_switch_mapping.log'))
             mode_processes.append(self._launch_detached(
-                'rosrun move_base move_base cmd_vel:=/cmd_vel/mapping_raw '
+                '/opt/ros/noetic/lib/move_base/move_base '
+                'cmd_vel:=/cmd_vel/mapping_raw '
                 'move_base_simple/goal:=/nav_goal __name:=move_base',
                 '/tmp/eggy_mode_switch_movebase.log'))
         else:
@@ -788,7 +797,7 @@ class EggyCommandCenter:
             self._set_runtime_profile(profile, map_file)
             self._configure_runtime_navigation('navigation')
             self._launch_detached(
-                'rosrun map_server map_server ' + quoted_map,
+                '/opt/ros/noetic/lib/map_server/map_server ' + quoted_map,
                 '/tmp/eggy_mode_switch_mapserver.log')
             map_ok, map_details = self._wait_map_matches(map_file, timeout_sec=4.0)
             if not map_ok:
@@ -798,10 +807,11 @@ class EggyCommandCenter:
                     'map_details': map_details,
                 }
             mode_processes.append(self._launch_detached(
-                'rosrun amcl amcl scan:=/scan __name:=amcl',
+                '/opt/ros/noetic/lib/amcl/amcl scan:=/scan __name:=amcl',
                 '/tmp/eggy_mode_switch_amcl.log'))
             mode_processes.append(self._launch_detached(
-                'rosrun move_base move_base cmd_vel:=/cmd_vel/navigation '
+                '/opt/ros/noetic/lib/move_base/move_base '
+                'cmd_vel:=/cmd_vel/navigation '
                 'move_base_simple/goal:=/nav_goal __name:=move_base',
                 '/tmp/eggy_mode_switch_movebase.log'))
             self._launch_runtime_support(profile)
