@@ -54,6 +54,26 @@ class LaunchContractTest(unittest.TestCase):
         self.assertIn('Subscriber("/base/flag_stop", UInt8', manager)
         self.assertIn('Subscriber("/base/flag_stop", UInt8', safety)
 
+    def test_mapping_profiles_publish_fresh_maps_without_excessive_scan_work(self):
+        expected = {
+            "map_update_interval": "1.5",
+            "linear_update": "0.15",
+            "angular_update": "0.15",
+            "temporal_update": "1.0",
+        }
+        for filename, prefix in (
+                ("mapping_light.launch", ""),
+                ("auto_mapping_light.launch", ""),
+                ("auto_explore_mapping.launch", "gmapping_")):
+            root = ET.fromstring(read("launch/%s" % filename))
+            defaults = {
+                item.attrib["name"]: item.attrib.get("default")
+                for item in root.findall("arg")
+            }
+            for name, value in expected.items():
+                self.assertEqual(value, defaults[prefix + name],
+                                 "%s:%s" % (filename, prefix + name))
+
     def test_raw_camera_relay_and_legacy_adapter_switch_are_explicit(self):
         system = read("launch/eggy_system.launch")
         self.assertIn("eggy_camera_raw_to_qt", system)

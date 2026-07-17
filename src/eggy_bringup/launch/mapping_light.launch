@@ -2,11 +2,11 @@
   <arg name="scan_topic" default="/scan" />
   <arg name="base_frame" default="base_link" />
   <arg name="odom_frame" default="odom" />
-  <arg name="map_update_interval" default="3.0" />
+  <arg name="map_update_interval" default="1.5" />
   <arg name="particles" default="20" />
-  <arg name="linear_update" default="0.30" />
-  <arg name="angular_update" default="0.30" />
-  <arg name="temporal_update" default="3.0" />
+  <arg name="linear_update" default="0.15" />
+  <arg name="angular_update" default="0.15" />
+  <arg name="temporal_update" default="1.0" />
   <arg name="xmin" default="-8.0" />
   <arg name="ymin" default="-8.0" />
   <arg name="xmax" default="8.0" />
