@@ -509,9 +509,11 @@ class EggyCommandCenter:
         targets.update(
             name for name in registered if name.startswith('/map_server'))
         node_uris = {}
+        node_masters = {}
         for name in targets:
             try:
                 node_uris[name] = master.lookupNode(name)
+                node_masters[name] = rosgraph.Master(name)
             except Exception:
                 pass
         for topic, names in pubs:
@@ -519,7 +521,7 @@ class EggyCommandCenter:
                 uri = node_uris.get(name)
                 if uri:
                     try:
-                        master.unregisterPublisher(topic, uri)
+                        node_masters[name].unregisterPublisher(topic, uri)
                     except Exception:
                         pass
         for topic, names in subs:
@@ -527,13 +529,13 @@ class EggyCommandCenter:
                 uri = node_uris.get(name)
                 if uri:
                     try:
-                        master.unregisterSubscriber(topic, uri)
+                        node_masters[name].unregisterSubscriber(topic, uri)
                     except Exception:
                         pass
         for service, names in srvs:
             for name in targets.intersection(names):
                 try:
-                    master.unregisterService(
+                    node_masters[name].unregisterService(
                         service, master.lookupService(service))
                 except Exception:
                     pass
