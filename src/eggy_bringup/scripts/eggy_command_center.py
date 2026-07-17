@@ -24,6 +24,7 @@ import yaml
 
 import rospy
 import rosgraph
+import rosnode
 import cv2
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
@@ -482,6 +483,13 @@ class EggyCommandCenter:
         except Exception:
             return set(rosnode_list()), {}
 
+    @staticmethod
+    def _runtime_node_live(name):
+        try:
+            return rosnode.rosnode_ping(name, max_count=1, verbose=False)
+        except Exception:
+            return False
+
     def _stop_runtime_mode(self):
         """Stop only profile-specific processes; keep the base and ROSBridge alive."""
         patterns = [
@@ -558,11 +566,21 @@ class EggyCommandCenter:
             if mode == 'navigation':
                 ready = map_ready and '/amcl' in nodes and '/move_base' in nodes
                 if ready:
+                    ready = (
+                        self._runtime_node_live('/amcl')
+                        and self._runtime_node_live('/move_base')
+                    )
+                if ready:
                     status.update({'mode': expected, 'state': 'ready',
                                    'map_ready': True})
                     return True, status
             else:
                 ready = map_ready and '/slam_gmapping' in nodes and '/move_base' in nodes
+                if ready:
+                    ready = (
+                        self._runtime_node_live('/slam_gmapping')
+                        and self._runtime_node_live('/move_base')
+                    )
                 if ready:
                     status.update({'mode': expected, 'state': 'ready',
                                    'map_ready': True})
@@ -635,7 +653,7 @@ class EggyCommandCenter:
             self._launch_detached(
                 'rosrun map_server map_server ' + quoted_map,
                 '/tmp/eggy_mode_switch_mapserver.log')
-            map_ok, map_details = self._wait_map_matches(map_file, timeout_sec=4.0)
+            map_ok, map_details = self._wait_map_matches(map_file, timeout_sec=8.0)
             if not map_ok:
                 return False, {
                     'mode': 'unknown',
