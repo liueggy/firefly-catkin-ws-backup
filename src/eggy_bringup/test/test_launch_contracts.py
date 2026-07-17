@@ -133,6 +133,7 @@ class LaunchContractTest(unittest.TestCase):
 
     def test_fast_profile_switch_preserves_the_persistent_base_stack(self):
         source = read("scripts/eggy_command_center.py")
+        self.assertIn("'roslaunch --skip-log-check '", source)
         fast_switch = source.split("    def switch_mode_fast(", 1)[1].split(
             "    def handle_switch_nav_mode(", 1)[0]
         self.assertNotIn("eggy-stack-start", fast_switch)

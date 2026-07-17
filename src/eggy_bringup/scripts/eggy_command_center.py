@@ -587,6 +587,9 @@ class EggyCommandCenter:
 
     def _launch_detached(self, command, log_path):
         """Launch a ROS command outside run_cmd's timeout-managed process group."""
+        if command.startswith('roslaunch '):
+            command = command.replace(
+                'roslaunch ', 'roslaunch --skip-log-check ', 1)
         env = os.environ.copy()
         env.setdefault('ROS_MASTER_URI', 'http://localhost:11311')
         wrapped = (
