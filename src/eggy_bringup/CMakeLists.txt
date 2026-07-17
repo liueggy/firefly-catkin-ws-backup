@@ -65,6 +65,8 @@ catkin_install_python(PROGRAMS
   scripts/eggy_nav_mode_status.py
   scripts/eggy_network_status.py
   scripts/eggy_shell_bridge.py
+  scripts/eggy_usart1_node.py
+  scripts/eggy_voice_controller.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

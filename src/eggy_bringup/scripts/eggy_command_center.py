@@ -340,6 +340,48 @@ class EggyCommandCenter:
              'log': '/tmp/eggy_mapping_manual.log',
              'was_running': already_running})
 
+    def handle_map_save(self, req):
+        """Atomically save the current /map into the canonical map library."""
+        if '/map' not in rostopic_list():
+            return self.make_response(req, False, '当前没有可保存的地图话题')
+        os.makedirs(MAP_LIBRARY_ROOT, exist_ok=True)
+        map_id = 'voice_' + time.strftime('%Y%m%d_%H%M%S')
+        destination = os.path.join(MAP_LIBRARY_ROOT, map_id)
+        if os.path.exists(destination):
+            return self.make_response(req, False, '地图名称冲突，请稍后重试')
+        staging = tempfile.mkdtemp(prefix='.staging-voice-', dir=MAP_LIBRARY_ROOT)
+        prefix = os.path.join(staging, 'map')
+        try:
+            code, output = run_cmd(
+                'rosrun map_server map_saver -f ' + shlex.quote(prefix), timeout=20)
+            yaml_path = prefix + '.yaml'
+            pgm_path = prefix + '.pgm'
+            if code != 0 or not os.path.isfile(yaml_path) or not os.path.isfile(pgm_path):
+                return self.make_response(req, False, '地图保存失败', {
+                    'exit_code': code, 'output': output,
+                })
+            os.rename(yaml_path, os.path.join(staging, 'map.yaml'))
+            os.rename(pgm_path, os.path.join(staging, 'map.pgm'))
+            metadata = {
+                'schema_version': 1,
+                'map_id': map_id,
+                'source': 'voice_v5',
+                'created_at': time.time(),
+            }
+            with open(os.path.join(staging, 'metadata.json'), 'w', encoding='utf-8') as stream:
+                json.dump(metadata, stream, ensure_ascii=False, indent=2)
+            os.rename(staging, destination)
+            staging = ''
+            return self.make_response(req, True, '地图保存成功', {
+                'map_id': map_id,
+                'map_file': os.path.join(destination, 'map.yaml'),
+            })
+        except Exception as exc:
+            return self.make_response(req, False, '地图保存失败', {'error': str(exc)})
+        finally:
+            if staging and os.path.isdir(staging):
+                shutil.rmtree(staging, ignore_errors=True)
+
     def handle_list_maps(self, req):
         cmd = ("find " + shlex.quote(MAP_LIBRARY_ROOT) +
                " -mindepth 2 -maxdepth 2 -name 'map.yaml' "
@@ -908,6 +950,8 @@ class EggyCommandCenter:
             return self.handle_mapping_start(req)
         if key in ('mapping_reset', 'reset_mapping', 'clear_mapping'):
             return self.handle_mapping_reset(req)
+        if key in ('map_save', 'save_map'):
+            return self.handle_map_save(req)
         if key in ('auto_mapping_start', 'start_auto_mapping'):
             return self.handle_auto_mapping(req, 'start')
         if key in ('auto_mapping_stop', 'stop_auto_mapping', 'auto_mapping_cancel'):
@@ -944,7 +988,7 @@ class EggyCommandCenter:
             return self.make_response(req, False, 'set_mode 暂未自动执行：后续将接入 mapping/static_nav 栈切换；当前先用 status/模块控制做调试闭环')
         return self.make_response(req, False, '未知命令', {'supported': [
             'status', 'camera_start', 'camera_stop', 'clear_costmaps',
-            'mapping_start', 'mapping_stop', 'mapping_reset', 'list_maps',
+            'mapping_start', 'mapping_stop', 'mapping_reset', 'map_save', 'list_maps',
             'auto_mapping_start', 'auto_mapping_stop', 'auto_mapping_pause',
             'auto_mapping_resume', 'auto_mapping_status',
             'switch_nav_mode', 'switch_profile', 'upload_map',

@@ -63,6 +63,7 @@
   <arg name="default_temperature" default="25.0" />
   <arg name="default_humidity" default="50.0" />
   <arg name="dht_publish_rate" default="1.0" />
+  <arg name="voice_route_file" default="$(find eggy_bringup)/config/inspection_route.json" />
   <arg name="use_cpp_odom_fuser" default="true" />
 
   <arg name="use_mapping" default="true" />
@@ -338,14 +339,15 @@
   <!-- eggy_voice_controller: 语音指令绑定小车控制 -->
   <group if="$(arg use_voice_controller)">
     <node pkg="eggy_bringup" type="eggy_voice_controller.py" name="eggy_voice_controller" output="screen">
-      <param name="forward_speed" value="0.6" />
-      <param name="backward_speed" value="0.5" />
-      <param name="turn_speed" value="1.2" />
-      <param name="rotate_speed" value="2.0" />
-      <param name="forward_duration" value="3.0" />
-      <param name="backward_duration" value="3.0" />
-      <param name="turn_duration" value="3.0" />
-      <param name="rotate_duration" value="3.0" />
+      <param name="forward_speed" value="0.16" />
+      <param name="backward_speed" value="0.12" />
+      <param name="lateral_speed" value="0.12" />
+      <param name="rotate_speed" value="0.35" />
+      <param name="linear_duration" value="0.55" />
+      <param name="lateral_duration" value="0.45" />
+      <param name="rotate_duration" value="0.55" />
+      <param name="route_file" value="$(arg voice_route_file)" />
+      <param name="default_map_file" value="$(arg map_file)" />
     </node>
   </group>
 

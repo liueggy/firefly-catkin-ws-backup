@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-eggy_usart1_node.py — STM32 USART1 数据接收节点
+eggy_usart1_node.py — STM32 USART1 双向数据节点
 =================================================
 从 /dev/eggy_usart1 (115200) 读取 STM32 串口1 发来的文本数据，解析后发布到 ROS 话题。
 
@@ -15,6 +15,12 @@ STM32 USART1 发送的两类数据:
   /stm32/dht11/humidity     std_msgs/Float32  湿度 (%)
   /stm32/voice_command      std_msgs/String   语音命令 (JSON: {"func":"00","cmd":"04"})
 
+订阅话题:
+  /stm32/voice_playback     std_msgs/String   被动播报请求 (JSON: {"func":"FF","cmd":"80"})
+
+回播请求会写成 AA 55 FF <播报ID> FB。配套 STM32 固件负责把该帧从
+USART1 转发至语音模块所在的 UART5。
+
 参数:
   ~port       串口设备路径 (默认 /dev/eggy_usart1)
   ~baudrate   波特率 (默认 115200)
@@ -28,6 +34,8 @@ import time
 import rospy
 import serial
 from std_msgs.msg import Float32, String
+
+from eggy_bringup.voice_protocol import build_playback_frame, decode_playback_request
 
 
 class USART1Node:
@@ -54,23 +62,31 @@ class USART1Node:
         self.pub_voice = rospy.Publisher(
             "/stm32/voice_command", String, queue_size=10
         )
-
+        self.pub_playback_status = rospy.Publisher(
+            "/stm32/voice_playback/status", String, queue_size=10
+        )
         # ---- 串口 ----
         self.ser = None
         self._lock = threading.Lock()
+        self._write_lock = threading.Lock()
         self._running = True
+        self._last_open_attempt = 0.0
 
         self._dht_lock = threading.Lock()
         self._current_temp = self.default_temperature
         self._current_humi = self.default_humidity
         self._dht_source = "default"
         self._last_real_dht_stamp = None
-        self._open_serial()
 
         # ---- 统计 ----
         self._dht_count = 0
         self._voice_count = 0
         self._err_count = 0
+
+        self._open_serial()
+        self.sub_playback = rospy.Subscriber(
+            "/stm32/voice_playback", String, self._on_playback, queue_size=20
+        )
 
         rospy.on_shutdown(self._shutdown)
         rospy.loginfo(
@@ -81,9 +97,10 @@ class USART1Node:
     # ------------------------------------------------------------------ #
     #  串口管理
     # ------------------------------------------------------------------ #
-    def _open_serial(self):
-        """打开串口，失败时循环重试"""
+    def _open_serial(self, block=True):
+        """打开串口；启动阶段阻塞重试，运行阶段仅尝试一次。"""
         while not rospy.is_shutdown() and self._running:
+            self._last_open_attempt = time.time()
             try:
                 s = serial.Serial(
                     port=self.port,
@@ -95,13 +112,16 @@ class USART1Node:
                 with self._lock:
                     self.ser = s
                 rospy.loginfo("[%s] 串口已打开: %s", rospy.get_name(), self.port)
-                return
+                return True
             except serial.SerialException as e:
                 rospy.logwarn_throttle(
                     5, "[%s] 打开 %s 失败: %s，2s 后重试...",
                     rospy.get_name(), self.port, e,
                 )
-                time.sleep(2)
+                if not block:
+                    return False
+                time.sleep(self.serial_retry_interval)
+        return False
 
     def _close_serial(self):
         """安全关闭串口"""
@@ -112,6 +132,43 @@ class USART1Node:
                 except Exception:
                     pass
                 self.ser = None
+
+    @staticmethod
+    def _parse_playback_request(text):
+        return decode_playback_request(text)
+
+    def _publish_playback_status(self, success, command_id=None, message=""):
+        payload = {
+            "success": bool(success),
+            "func": "FF",
+            "cmd": None if command_id is None else "%02X" % command_id,
+            "message": str(message),
+            "stamp": rospy.Time.now().to_sec(),
+        }
+        self.pub_playback_status.publish(
+            String(data=json.dumps(payload, ensure_ascii=False)))
+
+    def _on_playback(self, msg):
+        command_id = None
+        try:
+            command_id = self._parse_playback_request(msg.data)
+            frame = build_playback_frame(command_id)
+            with self._lock:
+                serial_port = self.ser
+            if serial_port is None or not serial_port.is_open:
+                raise serial.SerialException("USART1 is not connected")
+            with self._write_lock:
+                written = serial_port.write(frame)
+                serial_port.flush()
+            if written != len(frame):
+                raise serial.SerialTimeoutException(
+                    "short serial write: %d/%d" % (written, len(frame)))
+            self._publish_playback_status(True, command_id, "playback frame forwarded")
+            rospy.loginfo("[VOICE-TX] AA 55 FF %02X FB", command_id)
+        except (ValueError, serial.SerialException, serial.SerialTimeoutException) as exc:
+            self._err_count += 1
+            self._publish_playback_status(False, command_id, str(exc))
+            rospy.logwarn("[VOICE-TX] rejected: %s", exc)
 
     # ------------------------------------------------------------------ #
     #  数据解析
