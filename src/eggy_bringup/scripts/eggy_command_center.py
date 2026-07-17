@@ -806,7 +806,7 @@ class EggyCommandCenter:
             self._launch_detached(
                 '/opt/ros/noetic/lib/map_server/map_server ' + quoted_map,
                 '/tmp/eggy_mode_switch_mapserver.log')
-            map_ok, map_details = self._wait_map_matches(map_file, timeout_sec=4.0)
+            map_ok, map_details = self._wait_map_matches(map_file, timeout_sec=8.0)
             if not map_ok:
                 return False, {
                     'mode': 'unknown',
