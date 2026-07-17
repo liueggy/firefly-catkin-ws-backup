@@ -28,7 +28,12 @@ def _as_bool(value):
 
 
 def _node_present(nodes, name):
-    return name in nodes or any(n.endswith("/" + name.lstrip("/")) for n in nodes)
+    canonical = "/" + name.lstrip("/")
+    return (
+        canonical in nodes
+        or any(n.endswith(canonical) for n in nodes)
+        or any(n.startswith(canonical + "_") for n in nodes)
+    )
 
 
 def _http_service_present(host, port):
