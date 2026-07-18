@@ -100,6 +100,13 @@ def load_yaml_mapping(path):
     return data
 
 
+def known_node_running(expected_name, live_nodes):
+    if expected_name == '/map_server':
+        return any(name == '/map_server' or name.startswith('/map_server_')
+                   for name in live_nodes)
+    return expected_name in live_nodes
+
+
 def http_service_alive(host, port):
     try:
         with socket.create_connection((host, int(port)), timeout=0.25):
@@ -210,7 +217,9 @@ class EggyCommandCenter:
 
     def build_status(self, detailed=True):
         nodes = rosnode_list()
-        node_state = {name: (name in nodes) for name in KNOWN_NODES}
+        node_state = {
+            name: known_node_running(name, nodes) for name in KNOWN_NODES
+        }
         node_state['/kimi_inspection_server'] = http_service_alive('127.0.0.1', 8000)
 
         authority = dict(self.profile_status)

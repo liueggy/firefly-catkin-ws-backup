@@ -40,6 +40,7 @@ class LaunchContractTest(unittest.TestCase):
         self.assertIn("global_costmap_params.yaml' if navigation", command_center)
         self.assertIn("rospy.set_param('/move_base', move_base_params)",
                       command_center)
+        self.assertIn("name.startswith('/map_server_')", command_center)
 
     def test_system_launches_authoritative_cmd_vel_arbiter(self):
         system = read("launch/eggy_system.launch")
