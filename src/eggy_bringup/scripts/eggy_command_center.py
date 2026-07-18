@@ -177,6 +177,8 @@ class EggyCommandCenter:
         self.allow_shell = bool(rospy.get_param('~allow_shell', False))
         self.camera_stream_topic = rospy.get_param(
             '~camera_stream_topic', '/camera/front/image_source/compressed')
+        self.camera_output_topic = rospy.get_param(
+            '~camera_output_topic', '/camera/front/image/compressed')
         self.last_status = {}
         self.mode_switch_gate = SwitchGate()
         rospy.loginfo('eggy_command_center started: request=/eggy/command/request response=/eggy/command/response status=/eggy/command/status')
@@ -300,7 +302,25 @@ class EggyCommandCenter:
                 frame_ok = True
             except rospy.ROSException as exc:
                 frame_error = str(exc)
-        ok = node_ok and frame_ok
+        profile = str(self.profile_status.get('profile', '')).strip().lower()
+        if node_ok and frame_ok and profile != 'inspection':
+            nodes = set(rosnode_list())
+            if '/eggy_camera_raw_to_qt' not in nodes:
+                self._launch_detached(
+                    'rosrun topic_tools relay '
+                    '/camera/front/image_source/compressed '
+                    '/camera/front/image/compressed '
+                    '__name:=eggy_camera_raw_to_qt',
+                    '/tmp/eggy_camera_relay.log')
+        output_frame_ok = False
+        if node_ok and frame_ok:
+            try:
+                rospy.wait_for_message(
+                    self.camera_output_topic, CompressedImage, timeout=8.0)
+                output_frame_ok = True
+            except rospy.ROSException as exc:
+                frame_error = str(exc)
+        ok = node_ok and frame_ok and output_frame_ok
         message = '摄像头图像流已就绪' if ok else (
             '摄像头节点在线但未收到图像' if node_ok else '摄像头启动失败')
         return self.make_response(req, ok, message, {
@@ -309,6 +329,8 @@ class EggyCommandCenter:
             'eggy_camera': node_ok,
             'image_topic': self.camera_stream_topic,
             'frame_received': frame_ok,
+            'output_topic': self.camera_output_topic,
+            'output_frame_received': output_frame_ok,
             'frame_error': frame_error,
         })
 
@@ -536,6 +558,7 @@ class EggyCommandCenter:
             registered.update(names)
         exact = {
             '/slam_gmapping', '/amcl', '/move_base', '/eggy_camera',
+            '/eggy_camera_raw_to_qt',
             '/inspection_servo_route_runner', '/meter_rknn_detect_cpp',
             '/kimi_inspection_server', '/kimi_inspection_bridge',
         }
@@ -605,6 +628,7 @@ class EggyCommandCenter:
             r"/opt/ros/noetic/lib/amcl/[a]mcl",
             r"/opt/ros/noetic/lib/move_base/[m]ove_base",
             r"[e]ggy_camera_node\.py",
+            r"[t]opic_tools relay.*/camera/front/image_source/compressed",
             r"[i]nspection_servo_route_runner\.py",
             r"[m]eter_rknn_detect_node",
             r"[k]imi_inspection_server\.py",
@@ -716,6 +740,13 @@ class EggyCommandCenter:
             '_pixel_format:=mjpg _mjpeg_passthrough:=true '
             '_compressed_topic:=/camera/front/image_source/compressed',
             '/tmp/eggy_mode_switch_support.log')
+        if profile != 'inspection':
+            self._launch_detached(
+                'rosrun topic_tools relay '
+                '/camera/front/image_source/compressed '
+                '/camera/front/image/compressed '
+                '__name:=eggy_camera_raw_to_qt',
+                '/tmp/eggy_mode_switch_camera_relay.log')
         inspection = 'true' if profile == 'inspection' else 'false'
         self._launch_detached(
             '/root/catkin_ws/devel/lib/eggy_bringup/'

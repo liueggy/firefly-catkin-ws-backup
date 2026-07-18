@@ -198,6 +198,8 @@ class LaunchContractTest(unittest.TestCase):
         self.assertIn("rospy.wait_for_message(", command_center)
         self.assertIn("self.camera_stream_topic, CompressedImage", command_center)
         self.assertIn("ok = node_ok and frame_ok", command_center)
+        self.assertIn("self.camera_output_topic, CompressedImage", command_center)
+        self.assertIn("output_frame_ok", command_center)
 
     def test_meter_input_and_overlay_topics_cannot_form_default_feedback_loop(self):
         root = ET.fromstring(read("launch/eggy_system.launch"))
@@ -217,9 +219,11 @@ class LaunchContractTest(unittest.TestCase):
         camera = root.find(".//node[@name='eggy_camera']")
         runner = root.find(".//node[@name='inspection_servo_route_runner']")
         inspection_group = root.find(".//group[@if='$(arg inspection)']")
+        navigation_group = root.find(".//group[@unless='$(arg inspection)']")
         self.assertIsNotNone(camera)
         self.assertIsNotNone(runner)
         self.assertIsNotNone(inspection_group)
+        self.assertIsNotNone(navigation_group)
         camera_params = {
             item.attrib["name"]: item.attrib["value"]
             for item in camera.findall("param")
@@ -239,6 +243,14 @@ class LaunchContractTest(unittest.TestCase):
             },
             inspection_nodes,
         )
+        relay = navigation_group.find("node[@name='eggy_camera_raw_to_qt']")
+        self.assertIsNotNone(relay)
+        self.assertEqual("topic_tools", relay.attrib["pkg"])
+
+    def test_fast_navigation_profile_starts_and_stops_camera_relay(self):
+        source = read("scripts/eggy_command_center.py")
+        self.assertIn("rosrun topic_tools relay", source)
+        self.assertIn("'/eggy_camera_raw_to_qt'", source)
 
     def test_fast_profile_switch_preserves_the_persistent_base_stack(self):
         source = read("scripts/eggy_command_center.py")

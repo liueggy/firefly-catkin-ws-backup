@@ -16,6 +16,11 @@
     <param name="compressed_topic" value="/camera/front/image_source/compressed" />
   </node>
 
+  <group unless="$(arg inspection)">
+    <node pkg="topic_tools" type="relay" name="eggy_camera_raw_to_qt"
+          args="/camera/front/image_source/compressed /camera/front/image/compressed" />
+  </group>
+
   <node pkg="eggy_bringup" type="inspection_servo_route_runner.py"
         name="inspection_servo_route_runner" output="screen">
     <param name="dry_run" value="false" />
