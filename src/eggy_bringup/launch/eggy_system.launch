@@ -30,6 +30,7 @@
   <arg name="meter_nms" default="0.45" />
   <arg name="meter_max_det" default="2" />
   <arg name="meter_frame_skip" default="1" />
+  <arg name="meter_overlay_jpeg_quality" default="72" />
   <arg name="use_kimi_server" default="true" />
   <arg name="use_kimi_bridge" default="true" />
   <arg name="kimi_api_base" default="http://127.0.0.1:8000" />
@@ -227,6 +228,7 @@
       <param name="nms" value="$(arg meter_nms)" />
       <param name="max_det" value="$(arg meter_max_det)" />
       <param name="frame_skip" value="$(arg meter_frame_skip)" />
+      <param name="overlay_jpeg_quality" value="$(arg meter_overlay_jpeg_quality)" />
     </node>
   </group>
   <!-- Compatibility only: current Qt subscribes to the stable raw source directly. -->

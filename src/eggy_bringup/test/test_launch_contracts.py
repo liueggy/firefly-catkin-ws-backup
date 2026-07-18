@@ -18,14 +18,22 @@ class LaunchContractTest(unittest.TestCase):
         config = yaml.safe_load(read("config/nav/teb_local_planner_params.yaml"))[
             "TebLocalPlannerROS"
         ]
-        self.assertLessEqual(config["max_vel_y"], 0.05)
-        self.assertLessEqual(config["max_vel_theta"], 0.65)
-        self.assertLessEqual(config["acc_lim_x"], 0.40)
-        self.assertLessEqual(config["acc_lim_y"], 0.20)
-        self.assertLessEqual(config["acc_lim_theta"], 0.90)
+        self.assertGreaterEqual(config["max_vel_x"], 0.25)
+        self.assertLessEqual(config["max_vel_x"], 0.28)
+        self.assertGreaterEqual(config["max_vel_y"], 0.06)
+        self.assertLessEqual(config["max_vel_y"], 0.08)
+        self.assertLessEqual(config["max_vel_theta"], 0.70)
+        self.assertLessEqual(config["acc_lim_x"], 0.45)
+        self.assertLessEqual(config["acc_lim_y"], 0.22)
+        self.assertLessEqual(config["acc_lim_theta"], 1.00)
         self.assertGreaterEqual(config["weight_kinematics_forward_drive"], 10.0)
         self.assertGreaterEqual(config["global_plan_viapoint_sep"], 0.30)
         self.assertLessEqual(config["weight_viapoint"], 15.0)
+        self.assertLessEqual(config["oscillation_v_eps"], 0.06)
+        self.assertLessEqual(config["oscillation_omega_eps"], 0.10)
+        self.assertLessEqual(config["oscillation_recovery_min_duration"], 2.5)
+        self.assertLessEqual(config["oscillation_filter_duration"], 2.5)
+        self.assertLessEqual(config["shrink_horizon_min_duration"], 3.0)
 
     def test_non_mapping_profiles_hard_disable_mapping_runtime(self):
         manager = read("scripts/auto_mapping_manager.py")
@@ -245,6 +253,22 @@ class LaunchContractTest(unittest.TestCase):
         params = {item.attrib["name"]: item.attrib["value"] for item in meter.findall("param")}
         self.assertEqual("$(arg meter_image_topic)", params["image_topic"])
         self.assertEqual("$(arg meter_overlay_topic)", params["overlay_comp_topic"])
+
+    def test_meter_overlay_stays_live_between_inference_frames(self):
+        detector = read("src/meter_rknn_detect_node.cpp")
+        self.assertIn("publish_cached_overlay", detector)
+        self.assertIn("last_detections_", detector)
+        self.assertIn('param<int>("overlay_jpeg_quality"', detector)
+
+        runtime = ET.fromstring(read("launch/runtime_profile_support.launch"))
+        meter = runtime.find(".//node[@name='meter_rknn_detect_cpp']")
+        self.assertIsNotNone(meter)
+        params = {
+            item.attrib["name"]: item.attrib["value"]
+            for item in meter.findall("param")
+        }
+        self.assertEqual("2", params["frame_skip"])
+        self.assertLessEqual(int(params["overlay_jpeg_quality"]), 75)
 
     def test_runtime_profile_support_matches_navigation_and_inspection_contracts(self):
         root = ET.fromstring(read("launch/runtime_profile_support.launch"))

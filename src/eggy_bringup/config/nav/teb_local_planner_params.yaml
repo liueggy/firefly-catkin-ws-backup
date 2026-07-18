@@ -16,22 +16,22 @@ TebLocalPlannerROS:
   cmd_angle_instead_rotvel: false
 
   # Velocity limits: normal travel is forward; lateral motion is corrective.
-  max_vel_x: 0.22
-  max_vel_x_backwards: 0.08
-  max_vel_y: 0.04
-  max_vel_trans: 0.22
+  max_vel_x: 0.27
+  max_vel_x_backwards: 0.10
+  max_vel_y: 0.07
+  max_vel_trans: 0.29
   min_vel_trans: 0.01
-  max_vel_theta: 0.60
+  max_vel_theta: 0.68
   min_vel_theta: 0.08
 
   # --- 加速度限制 ---
-  acc_lim_x: 0.35
-  acc_lim_y: 0.15
-  acc_lim_theta: 0.80
+  acc_lim_x: 0.45
+  acc_lim_y: 0.22
+  acc_lim_theta: 1.00
 
   # --- 轨迹优化 ---
-  dt_ref: 0.30
-  dt_hysteresis: 0.08
+  dt_ref: 0.25
+  dt_hysteresis: 0.06
   teb_autosize: true
   global_plan_overwrite_orientation: true
   allow_init_with_backwards_motion: false
@@ -60,7 +60,7 @@ TebLocalPlannerROS:
 
   # --- 权重：偏好前向，允许微调横移 ---
   weight_kinematics_nh: 0.0
-  weight_kinematics_forward_drive: 20.0
+  weight_kinematics_forward_drive: 12.0
   weight_max_vel_y: 1.0
   weight_acc_lim_y: 0.5
   weight_kinematics_turning_radius: 0.0
@@ -73,19 +73,19 @@ TebLocalPlannerROS:
   weight_acceleration_obstacle: 10.0
   weight_parallelity: 5.0
   weight_custom_obstacle: 10.0
-  weight_viapoint: 12.0
+  weight_viapoint: 10.0
 
   # --- 其它 ---
   enable_homotopy_class_planning: false
   enable_multiple_start_poses: false
   exact_arc_length: false
   shrink_horizon_backup: true
-  shrink_horizon_min_duration: 8.0
+  shrink_horizon_min_duration: 2.5
   penalty_epsilon: 0.05
 
   # --- 振荡恢复 ---
   oscillation_recovery: true
-  oscillation_v_eps: 0.12
-  oscillation_omega_eps: 0.12
-  oscillation_recovery_min_duration: 6.0
-  oscillation_filter_duration: 4.0
+  oscillation_v_eps: 0.05
+  oscillation_omega_eps: 0.08
+  oscillation_recovery_min_duration: 2.0
+  oscillation_filter_duration: 2.0

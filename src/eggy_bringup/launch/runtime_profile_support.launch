@@ -42,6 +42,7 @@
       <param name="nms" value="0.45" />
       <param name="max_det" value="2" />
       <param name="frame_skip" value="2" />
+      <param name="overlay_jpeg_quality" value="72" />
     </node>
     <node pkg="eggy_bringup" type="kimi_inspection_server.py"
           name="kimi_inspection_server" output="screen">
