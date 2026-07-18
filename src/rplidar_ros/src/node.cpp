@@ -36,6 +36,7 @@
 #include "sensor_msgs/LaserScan.h"
 #include "std_srvs/Empty.h"
 #include "sl_lidar.h" 
+#include <algorithm>
 
 #ifndef _countof
 #define _countof(_Array) (int)(sizeof(_Array) / sizeof(_Array[0]))
@@ -238,6 +239,7 @@ int main(int argc, char * argv[]) {
     std::string scan_mode;
     float max_distance;
     double scan_frequency;
+    double scan_failure_exit_timeout;
     ros::NodeHandle nh;
     ros::Publisher scan_pub = nh.advertise<sensor_msgs::LaserScan>("scan", 1000);
     ros::NodeHandle nh_private("~");
@@ -253,6 +255,9 @@ int main(int argc, char * argv[]) {
     nh_private.param<bool>("initial_reset", initial_reset, false);
     nh_private.param<bool>("angle_compensate", angle_compensate, false);
     nh_private.param<std::string>("scan_mode", scan_mode, std::string());
+    nh_private.param<double>("scan_failure_exit_timeout",
+                             scan_failure_exit_timeout, 3.0);
+    scan_failure_exit_timeout = std::max(1.0, scan_failure_exit_timeout);
     if(channel_type == "udp"){
         nh_private.param<double>("scan_frequency", scan_frequency, 20.0);
     }
@@ -390,6 +395,8 @@ int main(int argc, char * argv[]) {
     ros::Time start_scan_time;
     ros::Time end_scan_time;
     double scan_duration;
+    bool scan_failure_active = false;
+    ros::WallTime scan_failure_since;
 
     
     while (ros::ok()) {
@@ -401,7 +408,8 @@ int main(int argc, char * argv[]) {
         end_scan_time = ros::Time::now();
         scan_duration = (end_scan_time - start_scan_time).toSec();
 
-        if (op_result == SL_RESULT_OK) { 
+        if (op_result == SL_RESULT_OK) {
+            scan_failure_active = false;
             if(scan_frequency_tunning_after_scan){ //Set scan frequency(For Slamtec Tof lidar)
                 ROS_INFO("set lidar scan frequency to %.1f Hz(%.1f Rpm) ",scan_frequency,scan_frequency*60);
                 drv->setMotorSpeed(scan_frequency*60); //rpm 
@@ -464,6 +472,22 @@ int main(int argc, char * argv[]) {
                              start_scan_time, scan_duration, inverted,
                              angle_min, angle_max, max_distance,
                              frame_id);
+            }
+        } else {
+            const ros::WallTime now = ros::WallTime::now();
+            if (!scan_failure_active) {
+                scan_failure_active = true;
+                scan_failure_since = now;
+            }
+            const double failure_age = (now - scan_failure_since).toSec();
+            ROS_WARN_THROTTLE(1.0,
+                              "RPLIDAR scan read failed (code: %08x, %.1fs)",
+                              op_result, failure_age);
+            if (failure_age >= scan_failure_exit_timeout) {
+                ROS_ERROR("RPLIDAR scan stalled for %.1fs; exiting so roslaunch "
+                          "can reconnect the serial device.",
+                          failure_age);
+                break;
             }
         }
 

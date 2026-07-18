@@ -20,7 +20,6 @@ from geometry_msgs.msg import PoseArray, Pose, PoseStamped, Quaternion, Twist
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from nav_msgs.msg import OccupancyGrid, Odometry
 from nav_msgs.srv import GetPlan
-from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, Empty, Float32, String, UInt8
 
 from eggy_bringup.auto_mapping_core import (
@@ -124,7 +123,9 @@ class AutoMappingManager(object):
         rospy.Subscriber(
             "/eggy/auto_mapping/request", String, self.request_cb, queue_size=10)
         rospy.Subscriber("/map", OccupancyGrid, self.map_cb, queue_size=1)
-        rospy.Subscriber("/scan", LaserScan, self.scan_cb, queue_size=1)
+        # Only the arrival timestamp is needed here. AnyMsg avoids decoding the
+        # full ranges/intensities arrays in a second Python process.
+        rospy.Subscriber("/scan", rospy.AnyMsg, self.scan_cb, queue_size=1)
         rospy.Subscriber("/odom", Odometry, self.odom_cb, queue_size=1)
         rospy.Subscriber("/battery/voltage", Float32, self.battery_cb, queue_size=1)
         rospy.Subscriber("/eggy/emergency_stop", Bool, self.emergency_cb, queue_size=1)
@@ -156,15 +157,19 @@ class AutoMappingManager(object):
             return None
 
     def map_cb(self, msg):
-        known = sum(1 for value in msg.data if value >= 0)
         now = time.time()
+        with self.lock:
+            active = self.state in ACTIVE_STATES
+            self.latest_map = msg
+            self.map_stamp = now
+        if not active:
+            return
+        known = sum(1 for value in msg.data if value >= 0)
         with self.lock:
             if known >= self.last_known_cells + 30:
                 self.last_map_growth_time = now
             self.last_known_cells = max(self.last_known_cells, known)
             self.known_cells = known
-            self.latest_map = msg
-            self.map_stamp = now
 
     def scan_cb(self, _msg):
         with self.lock:

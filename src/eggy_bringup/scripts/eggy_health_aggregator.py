@@ -81,6 +81,10 @@ class HealthAggregator:
         self.nav_status = None      # 最近一个 GoalStatus 的 status
         self.nav_text = ''
         self.nav_status_time = None
+        self.node_refresh_period = max(
+            1.0, float(rospy.get_param('~node_refresh_period', 3.0)))
+        self.alive_nodes_cache = set()
+        self.alive_nodes_stamp = rospy.Time(0)
         # 收编其它发布者(如 stm32_base_driver)发到 /diagnostics 的状态，
         # 缓存后并入自己的完整数组统一发布，避免 Qt 端两套数组交替跳闪。
         self.external_status = {}   # name -> (DiagnosticStatus, last_seen_time)
@@ -219,11 +223,18 @@ class HealthAggregator:
                         ('磁盘使用率%', disk_pct if disk_pct is not None else 'n/a')]))
 
         # 2. ROS 节点存活
-        try:
-            import rosnode
-            alive = set(rosnode.get_node_names())
-        except Exception:
-            alive = set()
+        if (self.alive_nodes_stamp == rospy.Time(0)
+                or (now - self.alive_nodes_stamp).to_sec()
+                >= self.node_refresh_period):
+            try:
+                import rosnode
+                self.alive_nodes_cache = set(rosnode.get_node_names())
+                self.alive_nodes_stamp = now
+            except Exception:
+                # Preserve the last known snapshot during a transient master
+                # query failure instead of reporting every node offline.
+                pass
+        alive = set(self.alive_nodes_cache)
         map_server_alive = any(
             n == '/map_server' or n.startswith('/map_server_') for n in alive)
         amcl_mode = '/amcl' in alive or map_server_alive

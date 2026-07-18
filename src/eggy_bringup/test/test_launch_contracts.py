@@ -29,6 +29,35 @@ class LaunchContractTest(unittest.TestCase):
         self.assertIn('type="cmd_vel_arbiter.py"', system)
         self.assertIn('name="eggy_cmd_vel_arbiter"', system)
 
+    def test_rplidar_recovers_after_serial_reenumeration(self):
+        root = ET.fromstring(read("../rplidar_ros/launch/rplidar_a1.launch"))
+        node = root.find(".//node[@name='rplidarNode']")
+        self.assertIsNotNone(node)
+        self.assertEqual("true", node.attrib.get("respawn"))
+        self.assertEqual("2.0", node.attrib.get("respawn_delay"))
+        params = {
+            item.attrib["name"]: item.attrib["value"]
+            for item in node.findall("param")
+        }
+        self.assertEqual("/dev/rplidar", params["serial_port"])
+        self.assertEqual("3.0", params["scan_failure_exit_timeout"])
+        driver = read("../rplidar_ros/src/node.cpp")
+        self.assertIn("failure_age >= scan_failure_exit_timeout", driver)
+        self.assertIn("RPLIDAR scan stalled for %.1fs", driver)
+
+    def test_idle_services_do_not_deserialize_or_process_full_sensor_frames(self):
+        manager = read("scripts/auto_mapping_manager.py")
+        safety = read("scripts/auto_mapping_safety.py")
+        voice = read("scripts/eggy_voice_controller.py")
+        health = read("scripts/eggy_health_aggregator.py")
+        self.assertIn('Subscriber("/scan", rospy.AnyMsg', manager)
+        self.assertIn("if not active:", manager)
+        self.assertIn("self.scan_subscriber = None", safety)
+        self.assertIn("self.scan_subscriber.unregister()", safety)
+        self.assertIn('Subscriber("/scan", rospy.AnyMsg', voice)
+        self.assertIn("node_refresh_period", health)
+        self.assertIn("self.alive_nodes_cache", health)
+
     def test_voice_controller_is_enabled_in_every_runtime_profile(self):
         for name in ("mapping", "navigation", "inspection"):
             profile = read("launch/%s_profile.launch" % name)

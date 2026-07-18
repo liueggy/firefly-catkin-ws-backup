@@ -49,8 +49,8 @@ class AutoMappingSafety(object):
         self.output_pub = rospy.Publisher("/cmd_vel/mapping", Twist, queue_size=1)
         self.status_pub = rospy.Publisher(
             "/eggy/auto_mapping/safety_status", String, queue_size=1, latch=True)
+        self.scan_subscriber = None
         rospy.Subscriber("/cmd_vel/mapping_raw", Twist, self.raw_cb, queue_size=1)
-        rospy.Subscriber("/scan", LaserScan, self.scan_cb, queue_size=1)
         rospy.Subscriber("/odom", Odometry, self.odom_cb, queue_size=1)
         rospy.Subscriber("/eggy/auto_mapping/safety_active", Bool, self.active_cb, queue_size=1)
         rospy.Subscriber("/eggy/auto_mapping/safety_config", String, self.config_cb, queue_size=1)
@@ -80,15 +80,26 @@ class AutoMappingSafety(object):
         return best
 
     def scan_cb(self, msg):
+        clearances = {
+            "front": self.sector_min(msg, 0.0, 34.0),
+            "rear": self.sector_min(msg, 180.0, 34.0),
+            "left": self.sector_min(msg, 90.0, 34.0),
+            "right": self.sector_min(msg, -90.0, 34.0),
+            "rotation": self.sector_min(msg, 0.0, 180.0),
+        }
         with self.lock:
-            self.clearances = {
-                "front": self.sector_min(msg, 0.0, 34.0),
-                "rear": self.sector_min(msg, 180.0, 34.0),
-                "left": self.sector_min(msg, 90.0, 34.0),
-                "right": self.sector_min(msg, -90.0, 34.0),
-                "rotation": self.sector_min(msg, 0.0, 180.0),
-            }
+            if not self.active:
+                return
+            self.clearances = clearances
             self.last_scan = time.time()
+
+    def set_scan_subscription(self, active):
+        if active and self.scan_subscriber is None:
+            self.scan_subscriber = rospy.Subscriber(
+                "/scan", LaserScan, self.scan_cb, queue_size=1)
+        elif not active and self.scan_subscriber is not None:
+            self.scan_subscriber.unregister()
+            self.scan_subscriber = None
 
     def raw_cb(self, msg):
         with self.lock:
@@ -115,13 +126,16 @@ class AutoMappingSafety(object):
             self.max_linear = self.clamp(max_linear, 0.05, 0.30)
 
     def active_cb(self, msg):
+        active = bool(msg.data)
         with self.lock:
-            self.active = bool(msg.data)
+            self.active = active
+            self.last_scan = 0.0
             if not self.active:
                 self.fault_latched = False
                 self.raw_twist = Twist()
                 self.last_reason = "inactive"
-        if not msg.data:
+        self.set_scan_subscription(active)
+        if not active:
             self.output_pub.publish(Twist())
 
     def emergency_cb(self, msg):
@@ -205,6 +219,7 @@ class AutoMappingSafety(object):
         self.status_pub.publish(String(json.dumps(payload, ensure_ascii=False)))
 
     def shutdown(self):
+        self.set_scan_subscription(False)
         self.output_pub.publish(Twist())
 
 

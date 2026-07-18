@@ -20,7 +20,7 @@ import rospy
 import tf
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import CompressedImage, LaserScan
+from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import Bool, Float32, String, UInt8
 from std_srvs.srv import Empty
 
@@ -121,7 +121,10 @@ class VoiceController(object):
         rospy.Subscriber("/eggy/mission/request", String, self.on_mission_request, queue_size=10)
         rospy.Subscriber("/eggy/mission/status", String, self.on_mission_status, queue_size=10)
         rospy.Subscriber("/eggy/mission/result", String, self.on_mission_result, queue_size=10)
-        rospy.Subscriber("/scan", LaserScan, lambda _msg: self._mark("scan"), queue_size=1)
+        # Voice preflight only needs freshness, not decoded ranges. Avoid
+        # deserializing the full scan in this always-on Python process.
+        rospy.Subscriber("/scan", rospy.AnyMsg,
+                         lambda _msg: self._mark("scan"), queue_size=1)
         rospy.Subscriber("/odom", Odometry, self.on_odom, queue_size=1)
         rospy.Subscriber("/camera/front/image/compressed", CompressedImage,
                          lambda _msg: self._mark("camera"), queue_size=1)
