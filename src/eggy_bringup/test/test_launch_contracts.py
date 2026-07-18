@@ -45,6 +45,26 @@ class LaunchContractTest(unittest.TestCase):
         self.assertIn("failure_age >= scan_failure_exit_timeout", driver)
         self.assertIn("RPLIDAR scan stalled for %.1fs", driver)
 
+    def test_external_lidar_watchdog_covers_blocked_driver_reads(self):
+        root = ET.fromstring(read("launch/eggy_system.launch"))
+        lidar_group = root.find(".//group[@if='$(arg use_lidar)']")
+        self.assertIsNotNone(lidar_group)
+        watchdog = lidar_group.find(".//node[@name='eggy_lidar_watchdog']")
+        self.assertIsNotNone(watchdog)
+        self.assertEqual("lidar_watchdog.py", watchdog.attrib.get("type"))
+        self.assertEqual("true", watchdog.attrib.get("respawn"))
+        params = {
+            item.attrib["name"]: item.attrib["value"]
+            for item in watchdog.findall("param")
+        }
+        self.assertEqual("/scan", params["scan_topic"])
+        self.assertEqual("8.0", params["startup_grace"])
+        self.assertEqual("2.0", params["scan_timeout"])
+        self.assertEqual("10.0", params["recovery_cooldown"])
+
+        cmake = read("CMakeLists.txt")
+        self.assertIn("scripts/lidar_watchdog.py", cmake)
+
     def test_idle_services_do_not_deserialize_or_process_full_sensor_frames(self):
         manager = read("scripts/auto_mapping_manager.py")
         safety = read("scripts/auto_mapping_safety.py")

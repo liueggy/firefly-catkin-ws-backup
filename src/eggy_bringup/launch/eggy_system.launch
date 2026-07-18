@@ -83,6 +83,17 @@
 
   <group if="$(arg use_lidar)">
     <include file="$(find rplidar_ros)/launch/rplidar_a1.launch" />
+    <!-- SDK reads can block while the process remains visible to ROS.
+         This independent watchdog recovers the process from /scan age. -->
+    <node pkg="eggy_bringup" type="lidar_watchdog.py"
+          name="eggy_lidar_watchdog" output="screen"
+          respawn="true" respawn_delay="2.0">
+      <param name="scan_topic" value="/scan" />
+      <param name="startup_grace" value="8.0" />
+      <param name="scan_timeout" value="2.0" />
+      <param name="recovery_cooldown" value="10.0" />
+      <param name="kill_grace" value="1.5" />
+    </node>
   </group>
 
   <group if="$(arg use_external_imu)">

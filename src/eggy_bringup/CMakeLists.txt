@@ -67,6 +67,7 @@ catkin_install_python(PROGRAMS
   scripts/eggy_shell_bridge.py
   scripts/eggy_usart1_node.py
   scripts/eggy_voice_controller.py
+  scripts/lidar_watchdog.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
