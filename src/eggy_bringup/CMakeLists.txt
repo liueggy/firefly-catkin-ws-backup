@@ -38,6 +38,7 @@ target_link_libraries(meter_rknn_detect_node ${catkin_LIBRARIES} ${OpenCV_LIBRAR
 
 if(CATKIN_ENABLE_TESTING)
   catkin_add_gtest(test_meter_letterbox test/test_meter_letterbox.cpp)
+  catkin_add_gtest(test_odom_fusion_math test/test_odom_fusion_math.cpp)
   add_test(NAME test_eggy_python_contracts
     COMMAND ${PYTHON_EXECUTABLE} -m unittest discover
             -s ${CMAKE_CURRENT_SOURCE_DIR}/test -p test_*.py)

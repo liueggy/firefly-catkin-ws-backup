@@ -421,7 +421,7 @@ class FastAutoMapper:
         cmd = [
             "rosrun", "gmapping", "slam_gmapping", "scan:=" + scan_topic,
             "_base_frame:=base_link", "_odom_frame:=odom",
-            "_map_update_interval:={}".format(rospy.get_param("~gmapping_map_update_interval", 1.5)),
+            "_map_update_interval:={}".format(rospy.get_param("~gmapping_map_update_interval", 1.0)),
             "_linearUpdate:={}".format(rospy.get_param("~gmapping_linear_update", 0.15)),
             "_angularUpdate:={}".format(rospy.get_param("~gmapping_angular_update", 0.15)),
             "_temporalUpdate:={}".format(rospy.get_param("~gmapping_temporal_update", 1.0)),

@@ -866,7 +866,7 @@ class EggyCommandCenter:
             self._configure_runtime_navigation('mapping')
             mode_processes.append(self._launch_detached(
                 '/opt/ros/noetic/lib/gmapping/slam_gmapping scan:=/scan '
-                '__name:=slam_gmapping _map_update_interval:=1.5 '
+                '__name:=slam_gmapping _map_update_interval:=1.0 '
                 '_linearUpdate:=0.15 _angularUpdate:=0.15 '
                 '_temporalUpdate:=1.0 _particles:=20 '
                 '_xmin:=-8.0 _ymin:=-8.0 _xmax:=8.0 _ymax:=8.0 '

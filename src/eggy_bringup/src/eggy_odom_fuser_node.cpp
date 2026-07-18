@@ -8,6 +8,8 @@
 #include <sensor_msgs/Imu.h>
 #include <tf2_ros/transform_broadcaster.h>
 
+#include "eggy_bringup/odom_fusion_math.h"
+
 class EggyOdomFuser {
  public:
   EggyOdomFuser() : nh_(), pnh_("~") {
@@ -18,13 +20,21 @@ class EggyOdomFuser {
     pnh_.param<bool>("publish_tf", publish_tf_, true);
     pnh_.param<double>("rate", rate_hz_, 50.0);
     pnh_.param<int>("bias_samples", bias_samples_, 50);
+    pnh_.param<double>("wheel_yaw_correction_rate",
+                       wheel_yaw_correction_rate_, 0.35);
+    pnh_.param<double>("stationary_linear_threshold",
+                       stationary_linear_threshold_, 0.015);
+    pnh_.param<double>("stationary_angular_threshold",
+                       stationary_angular_threshold_, 0.025);
+    pnh_.param<double>("bias_learning_rate", bias_learning_rate_, 0.002);
 
     odom_pub_ = nh_.advertise<nav_msgs::Odometry>("/odom", 20);
     wheel_sub_ = nh_.subscribe(wheel_topic_, 50, &EggyOdomFuser::wheelCb, this);
     imu_sub_ = nh_.subscribe(imu_topic_, 200, &EggyOdomFuser::imuCb, this);
 
-    ROS_INFO("MPU6050 C++ odom fuser: wheel=%s imu=%s rate=%.1fHz tf=%s bias_samples=%d",
-             wheel_topic_.c_str(), imu_topic_.c_str(), rate_hz_, publish_tf_ ? "true" : "false", bias_samples_);
+    ROS_INFO("MPU6050 C++ odom fuser: wheel=%s imu=%s rate=%.1fHz tf=%s bias_samples=%d yaw_correction=%.2f/s",
+             wheel_topic_.c_str(), imu_topic_.c_str(), rate_hz_, publish_tf_ ? "true" : "false",
+             bias_samples_, wheel_yaw_correction_rate_);
   }
 
   void spin() {
@@ -84,12 +94,6 @@ class EggyOdomFuser {
   }
 
  private:
-  static double normAng(double a) {
-    while (a > M_PI) a -= 2.0 * M_PI;
-    while (a < -M_PI) a += 2.0 * M_PI;
-    return a;
-  }
-
   static double yawFromQuat(const geometry_msgs::Quaternion& q) {
     return std::atan2(2.0 * (q.w * q.z + q.x * q.y),
                       1.0 - 2.0 * (q.y * q.y + q.z * q.z));
@@ -135,7 +139,25 @@ class EggyOdomFuser {
     if (dt <= 0.0 || dt > 0.2) {
       return;
     }
-    base_yaw_ = normAng(base_yaw_ + (gz - gyro_bias_) * dt);
+    const bool stationary =
+        has_wheel_ &&
+        std::hypot(latest_wheel_.twist.twist.linear.x,
+                   latest_wheel_.twist.twist.linear.y) <=
+            stationary_linear_threshold_ &&
+        std::abs(latest_wheel_.twist.twist.angular.z) <=
+            stationary_angular_threshold_;
+    if (stationary) {
+      gyro_bias_ = eggy_bringup::LearnStationaryGyroBias(
+          gyro_bias_, gz, bias_learning_rate_);
+    }
+    const double integrated = eggy_bringup::NormalizeAngle(
+        base_yaw_ + (gz - gyro_bias_) * dt);
+    base_yaw_ = has_wheel_
+                    ? eggy_bringup::CorrectYawTowardWheel(
+                          integrated,
+                          yawFromQuat(latest_wheel_.pose.pose.orientation),
+                          wheel_yaw_correction_rate_, dt)
+                    : integrated;
     has_yaw_ = true;
   }
 
@@ -157,6 +179,10 @@ class EggyOdomFuser {
   int bias_count_{0};
   int bias_samples_{50};
   double last_stamp_{0.0};
+  double wheel_yaw_correction_rate_{0.35};
+  double stationary_linear_threshold_{0.015};
+  double stationary_angular_threshold_{0.025};
+  double bias_learning_rate_{0.002};
 
   std::string odom_frame_;
   std::string base_frame_;

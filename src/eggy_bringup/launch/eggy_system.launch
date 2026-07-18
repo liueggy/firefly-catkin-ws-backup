@@ -112,6 +112,10 @@
       <param name="base_frame_id" value="base_link" />
       <param name="publish_tf" value="true" />
       <param name="rate" value="50.0" />
+      <param name="wheel_yaw_correction_rate" value="0.35" />
+      <param name="stationary_linear_threshold" value="0.015" />
+      <param name="stationary_angular_threshold" value="0.025" />
+      <param name="bias_learning_rate" value="0.002" />
     </node>
   </group>
   <group unless="$(arg use_cpp_odom_fuser)">
@@ -178,7 +182,10 @@
 
   <!-- Base driver remains on /cmd_vel; all primary producers use leased inputs. -->
   <!-- Single authoritative base-velocity owner. All producers publish to typed inputs. -->
-  <node pkg="eggy_bringup" type="cmd_vel_arbiter.py" name="eggy_cmd_vel_arbiter" output="screen" />
+  <node pkg="eggy_bringup" type="cmd_vel_arbiter.py" name="eggy_cmd_vel_arbiter" output="screen">
+    <!-- Tolerate short rosbridge/UI scheduling stalls; release still sends an immediate zero. -->
+    <param name="manual_timeout" value="0.75" />
+  </node>
 
   <!-- Automatic mapping uses a fail-closed velocity path. Raw move_base output is never an arbiter source. -->
   <group if="$(arg use_auto_mapping)">

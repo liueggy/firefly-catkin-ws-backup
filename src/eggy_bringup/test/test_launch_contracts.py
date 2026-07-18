@@ -46,6 +46,19 @@ class LaunchContractTest(unittest.TestCase):
         system = read("launch/eggy_system.launch")
         self.assertIn('type="cmd_vel_arbiter.py"', system)
         self.assertIn('name="eggy_cmd_vel_arbiter"', system)
+        self.assertIn('<param name="manual_timeout" value="0.75"', system)
+        self.assertIn('rospy.get_param("~manual_timeout", 0.75)',
+                      read("scripts/cmd_vel_arbiter.py"))
+
+    def test_cpp_odom_fuser_has_bounded_online_drift_correction(self):
+        system = read("launch/eggy_system.launch")
+        for name, value in (
+                ("wheel_yaw_correction_rate", "0.35"),
+                ("stationary_linear_threshold", "0.015"),
+                ("stationary_angular_threshold", "0.025"),
+                ("bias_learning_rate", "0.002")):
+            self.assertIn('<param name="%s" value="%s"' % (name, value),
+                          system)
 
     def test_rplidar_recovers_after_serial_reenumeration(self):
         root = ET.fromstring(read("../rplidar_ros/launch/rplidar_a1.launch"))
@@ -135,6 +148,7 @@ class LaunchContractTest(unittest.TestCase):
         self.assertIn('to="$(arg cmd_vel_topic)"', move_base)
         self.assertIn('"mapping": ("/cmd_vel/mapping", 70, 0.4)',
                       read("scripts/cmd_vel_arbiter.py"))
+        self.assertIn('<param name="manual_timeout" value="0.75"', system)
 
     def test_auto_mapping_uses_deployed_ros_message_types(self):
         manager = read("scripts/auto_mapping_manager.py")
@@ -145,7 +159,7 @@ class LaunchContractTest(unittest.TestCase):
 
     def test_mapping_profiles_publish_fresh_maps_without_excessive_scan_work(self):
         expected = {
-            "map_update_interval": "1.5",
+            "map_update_interval": "1.0",
             "linear_update": "0.15",
             "angular_update": "0.15",
             "temporal_update": "1.0",

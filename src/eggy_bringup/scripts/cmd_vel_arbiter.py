@@ -15,11 +15,12 @@ class CmdVelArbiter(object):
         self.lock = threading.Lock()
         self.sources = {}
         self.emergency_stop = False
+        manual_timeout = rospy.get_param("~manual_timeout", 0.75)
         self.config = {
             "navigation": ("/cmd_vel/navigation", 40, 0.6),
             "mission": ("/cmd_vel/mission", 60, 0.6),
             "mapping": ("/cmd_vel/mapping", 70, 0.4),
-            "manual": ("/cmd_vel/manual", 80, 0.4),
+            "manual": ("/cmd_vel/manual", 80, manual_timeout),
             "safety": ("/cmd_vel/safety", 100, 0.5),
         }
         self.output = rospy.Publisher("/cmd_vel", Twist, queue_size=1)

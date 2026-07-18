@@ -8,7 +8,7 @@
   <arg name="ymin" default="-8.0" />
   <arg name="xmax" default="8.0" />
   <arg name="ymax" default="8.0" />
-  <arg name="map_update_interval" default="1.5" />
+  <arg name="map_update_interval" default="1.0" />
   <arg name="linear_update" default="0.15" />
   <arg name="angular_update" default="0.15" />
   <arg name="temporal_update" default="1.0" />

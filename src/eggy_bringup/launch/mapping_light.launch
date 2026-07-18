@@ -2,7 +2,7 @@
   <arg name="scan_topic" default="/scan" />
   <arg name="base_frame" default="base_link" />
   <arg name="odom_frame" default="odom" />
-  <arg name="map_update_interval" default="1.5" />
+  <arg name="map_update_interval" default="1.0" />
   <arg name="particles" default="20" />
   <arg name="linear_update" default="0.15" />
   <arg name="angular_update" default="0.15" />
