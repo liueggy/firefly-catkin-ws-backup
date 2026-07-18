@@ -8,6 +8,11 @@ PROFILE_MODES = {
 }
 
 
+def profile_allows_mapping(profile):
+    """Return true only for the one profile allowed to own mapping motion."""
+    return str(profile or "").strip().lower() == "mapping"
+
+
 def build_profile_contract(profile, observed, map_available=False):
     if profile not in PROFILE_MODES:
         raise ValueError("profile must be mapping, navigation or inspection")

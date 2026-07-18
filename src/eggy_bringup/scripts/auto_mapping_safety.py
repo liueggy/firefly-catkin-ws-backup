@@ -13,6 +13,7 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, Empty, String, UInt8
 
 from eggy_bringup.auto_mapping_core import safe_mapping_twist
+from eggy_bringup.profile_contract import profile_allows_mapping
 
 
 class AutoMappingSafety(object):
@@ -29,6 +30,8 @@ class AutoMappingSafety(object):
         self.raw_twist = Twist()
         self.clearances = {}
         self.last_reason = "inactive"
+        self.mapping_profile_active = profile_allows_mapping(rospy.get_param(
+            "/eggy_nav_mode_status/profile", "mapping"))
 
         self.scan_timeout = float(rospy.get_param("~scan_timeout", 0.35))
         self.odom_timeout = float(rospy.get_param("~odom_timeout", 0.60))
@@ -57,6 +60,8 @@ class AutoMappingSafety(object):
         rospy.Subscriber("/eggy/auto_mapping/heartbeat", Empty, self.heartbeat_cb, queue_size=1)
         rospy.Subscriber("/eggy/emergency_stop", Bool, self.emergency_cb, queue_size=1)
         rospy.Subscriber("/base/flag_stop", UInt8, self.base_stop_cb, queue_size=1)
+        rospy.Subscriber("/eggy/nav_mode/status", String,
+                         self.profile_cb, queue_size=1)
         self.timer = rospy.Timer(rospy.Duration(0.05), self.tick)
         rospy.on_shutdown(self.shutdown)
         self.publish_status("inactive")
@@ -126,7 +131,7 @@ class AutoMappingSafety(object):
             self.max_linear = self.clamp(max_linear, 0.05, 0.30)
 
     def active_cb(self, msg):
-        active = bool(msg.data)
+        active = bool(msg.data) and self.mapping_profile_active
         with self.lock:
             self.active = active
             self.last_scan = 0.0
@@ -137,6 +142,17 @@ class AutoMappingSafety(object):
         self.set_scan_subscription(active)
         if not active:
             self.output_pub.publish(Twist())
+
+    def profile_cb(self, msg):
+        try:
+            profile = str(json.loads(msg.data).get("profile", "")).lower()
+        except (AttributeError, TypeError, ValueError):
+            return
+        if profile not in ("mapping", "navigation", "inspection"):
+            return
+        self.mapping_profile_active = profile_allows_mapping(profile)
+        if not self.mapping_profile_active:
+            self.active_cb(Bool(False))
 
     def emergency_cb(self, msg):
         with self.lock:

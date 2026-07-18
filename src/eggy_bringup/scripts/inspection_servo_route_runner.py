@@ -81,6 +81,12 @@ class InspectionServoRouteRunner:
         self.angular_accel = float(rospy.get_param("~angular_accel", 0.9))
         self.scan_topic = rospy.get_param("~scan_topic", "/scan")
         self.scan_timeout = float(rospy.get_param("~scan_timeout", 0.6))
+        self.navigation_scan_timeout = float(rospy.get_param(
+            "~navigation_scan_timeout", 1.0))
+        self.navigation_tf_timeout = float(rospy.get_param(
+            "~navigation_tf_timeout", 1.0))
+        self.navigation_stale_grace = max(0.5, float(rospy.get_param(
+            "~navigation_stale_grace", 2.0)))
         self.rotation_clearance = float(rospy.get_param("~rotation_clearance", 0.32))
         self.control_rate_hz = max(5.0, float(rospy.get_param("~control_rate_hz", 12.0)))
         self.roi_padding_ratio = float(rospy.get_param("~roi_padding_ratio", 0.18))
@@ -473,6 +479,17 @@ class InspectionServoRouteRunner:
         """Validate reachability without handing motion ownership to move_base."""
         if self.dry_run:
             return {"ok": True, "plan_poses": 1, "attempts": 0}
+        sensor_health = self.navigation_sensor_health(require_ranges=True)
+        if not sensor_health["ok"]:
+            return {
+                "ok": False,
+                "state": "navigation_sensor_stale",
+                "message": "navigation sensors are not fresh: %s" %
+                           sensor_health["reason"],
+                "sensor_health": sensor_health,
+                "plan_poses": 0,
+                "attempts": 0,
+            }
         try:
             rospy.wait_for_service("/move_base/make_plan", self.plan_service_timeout)
             start = self.pose_stamped_from_waypoint(self.current_pose_waypoint())
@@ -507,6 +524,36 @@ class InspectionServoRouteRunner:
                 "attempts": 0,
                 "tolerance": self.plan_tolerance,
             }
+
+    def navigation_sensor_health(self, require_ranges=False):
+        now = time.time()
+        scan_age = None if not self.last_scan_time else now - self.last_scan_time
+        if self.last_scan is None or scan_age is None:
+            return {"ok": False, "reason": "scan_missing", "scan_age": None}
+        if scan_age > self.navigation_scan_timeout:
+            return {"ok": False, "reason": "scan_stale",
+                    "scan_age": round(scan_age, 3)}
+        if require_ranges:
+            has_range = any(
+                math.isfinite(value) and
+                self.last_scan.range_min <= value <= self.last_scan.range_max
+                for value in self.last_scan.ranges)
+            if not has_range:
+                return {"ok": False, "reason": "scan_empty",
+                        "scan_age": round(scan_age, 3)}
+        try:
+            stamp = self.tf_listener.getLatestCommonTime(
+                self.default_frame, self.base_frame)
+            tf_age = max(0.0, (rospy.Time.now() - stamp).to_sec())
+            if tf_age > self.navigation_tf_timeout:
+                return {"ok": False, "reason": "tf_stale",
+                        "scan_age": round(scan_age, 3),
+                        "tf_age": round(tf_age, 3)}
+        except Exception as exc:
+            return {"ok": False, "reason": "tf_unavailable",
+                    "scan_age": round(scan_age, 3), "error": str(exc)}
+        return {"ok": True, "reason": "ready",
+                "scan_age": round(scan_age, 3), "tf_age": round(tf_age, 3)}
 
     def run_route(self, payload):
         started = time.time()
@@ -710,11 +757,34 @@ class InspectionServoRouteRunner:
             self.last_detection_class = ""
         self.client.send_goal(goal)
         deadline = time.time() + float(wp.get("nav_timeout", self.move_base_timeout))
+        next_sensor_check = 0.0
+        sensor_unhealthy_since = None
         try:
             while not rospy.is_shutdown() and time.time() < deadline:
                 if self.cancel_requested:
                     self.client.cancel_goal()
                     return {"ok": False, "state": -1, "state_text": "CANCELLED"}
+                if time.time() >= next_sensor_check:
+                    next_sensor_check = time.time() + 0.5
+                    sensor_health = self.navigation_sensor_health()
+                    if sensor_health["ok"]:
+                        sensor_unhealthy_since = None
+                    elif sensor_unhealthy_since is None:
+                        sensor_unhealthy_since = time.time()
+                    elif time.time() - sensor_unhealthy_since >= self.navigation_stale_grace:
+                        self.client.cancel_goal()
+                        self.publish_status(
+                            "navigation_sensor_stale",
+                            "navigation cancelled because sensor data expired",
+                            {"waypoint": wp, "sensor_health": sensor_health},
+                        )
+                        return {
+                            "ok": False,
+                            "state": -3,
+                            "state_text": "SENSOR_STALE",
+                            "sensor_health": sensor_health,
+                            "preflight": preflight,
+                        }
                 if self.client.wait_for_result(rospy.Duration(0.1)):
                     state = self.client.get_state()
                     return {

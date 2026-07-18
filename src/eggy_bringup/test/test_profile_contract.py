@@ -5,7 +5,10 @@ import unittest
 PACKAGE_SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
 sys.path.insert(0, PACKAGE_SRC)
 
-from eggy_bringup.profile_contract import build_profile_contract
+from eggy_bringup.profile_contract import (
+    build_profile_contract,
+    profile_allows_mapping,
+)
 
 
 class ProfileContractTest(unittest.TestCase):
@@ -48,6 +51,12 @@ class ProfileContractTest(unittest.TestCase):
             "ready",
             build_profile_contract("inspection", observed, map_available=True)["state"],
         )
+
+    def test_only_mapping_profile_can_activate_automatic_mapping(self):
+        self.assertTrue(profile_allows_mapping("mapping"))
+        self.assertFalse(profile_allows_mapping("navigation"))
+        self.assertFalse(profile_allows_mapping("inspection"))
+        self.assertFalse(profile_allows_mapping("unknown"))
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ from eggy_bringup.auto_mapping_core import (
     rank_frontiers,
     validate_mapping_request,
 )
+from eggy_bringup.profile_contract import profile_allows_mapping
 
 
 TERMINAL_STATES = {"completed", "cancelled", "aborted", "rejected"}
@@ -63,6 +64,8 @@ class AutoMappingManager(object):
         self.base_stop = False
         self.safety_status = {}
         self.control_status = {}
+        self.active_profile = str(rospy.get_param(
+            "/eggy_nav_mode_status/profile", "mapping")).strip().lower()
 
         self.home_pose = None
         self.current_goal = None
@@ -122,11 +125,13 @@ class AutoMappingManager(object):
 
         rospy.Subscriber(
             "/eggy/auto_mapping/request", String, self.request_cb, queue_size=10)
-        rospy.Subscriber("/map", OccupancyGrid, self.map_cb, queue_size=1)
-        # Only the arrival timestamp is needed here. AnyMsg avoids decoding the
-        # full ranges/intensities arrays in a second Python process.
-        rospy.Subscriber("/scan", rospy.AnyMsg, self.scan_cb, queue_size=1)
-        rospy.Subscriber("/odom", Odometry, self.odom_cb, queue_size=1)
+        self.map_subscriber = None
+        self.scan_subscriber = None
+        self.odom_subscriber = None
+        rospy.Subscriber("/eggy/nav_mode/status", String,
+                         self.profile_cb, queue_size=1)
+        self.set_sensor_subscriptions(
+            profile_allows_mapping(self.active_profile))
         rospy.Subscriber("/battery/voltage", Float32, self.battery_cb, queue_size=1)
         rospy.Subscriber("/eggy/emergency_stop", Bool, self.emergency_cb, queue_size=1)
         rospy.Subscriber("/base/flag_stop", UInt8, self.base_stop_cb, queue_size=1)
@@ -159,6 +164,8 @@ class AutoMappingManager(object):
     def map_cb(self, msg):
         now = time.time()
         with self.lock:
+            if not profile_allows_mapping(self.active_profile):
+                return
             active = self.state in ACTIVE_STATES
             self.latest_map = msg
             self.map_stamp = now
@@ -173,11 +180,59 @@ class AutoMappingManager(object):
 
     def scan_cb(self, _msg):
         with self.lock:
+            if not profile_allows_mapping(self.active_profile):
+                return
             self.scan_stamp = time.time()
 
     def odom_cb(self, _msg):
         with self.lock:
+            if not profile_allows_mapping(self.active_profile):
+                return
             self.odom_stamp = time.time()
+
+    def set_sensor_subscriptions(self, active):
+        if active and self.map_subscriber is None:
+            self.map_subscriber = rospy.Subscriber(
+                "/map", OccupancyGrid, self.map_cb, queue_size=1)
+            # Only arrival time is required; do not deserialize scan arrays.
+            self.scan_subscriber = rospy.Subscriber("/scan", rospy.AnyMsg,
+                                                    self.scan_cb, queue_size=1)
+            self.odom_subscriber = rospy.Subscriber(
+                "/odom", Odometry, self.odom_cb, queue_size=1)
+        elif not active and self.map_subscriber is not None:
+            for subscriber in (self.map_subscriber, self.scan_subscriber,
+                               self.odom_subscriber):
+                if subscriber is not None:
+                    subscriber.unregister()
+            self.map_subscriber = None
+            self.scan_subscriber = None
+            self.odom_subscriber = None
+            with self.lock:
+                self.latest_map = None
+                self.map_stamp = 0.0
+                self.scan_stamp = 0.0
+                self.odom_stamp = 0.0
+
+    def profile_cb(self, msg):
+        try:
+            profile = str(json.loads(msg.data).get("profile", "")).lower()
+        except (AttributeError, TypeError, ValueError):
+            return
+        if profile not in ("mapping", "navigation", "inspection"):
+            return
+        with self.lock:
+            changed = profile != self.active_profile
+            self.active_profile = profile
+            active = self.state in ACTIVE_STATES or self.state == "paused"
+        allowed = profile_allows_mapping(profile)
+        self.set_sensor_subscriptions(allowed)
+        if not allowed:
+            self.safety_active_pub.publish(Bool(False))
+            if active:
+                self.abort("profile_changed",
+                           "automatic mapping stopped outside mapping profile")
+        if changed:
+            self.publish_status(force=True)
 
     def battery_cb(self, msg):
         with self.lock:
@@ -224,6 +279,13 @@ class AutoMappingManager(object):
             self.publish_transient("bad_request", str(exc))
             return
         command = payload["command"]
+        if command in ("start", "resume") and not profile_allows_mapping(
+                self.active_profile):
+            self.publish_transient(
+                "profile_rejected",
+                "automatic mapping is disabled in %s profile" %
+                self.active_profile)
+            return
         if command == "start":
             self.start(payload)
         elif command == "pause":
@@ -514,6 +576,7 @@ class AutoMappingManager(object):
                 "source": "automatic_mapping",
                 "quality": quality,
                 "request_id": self.request_id,
+                "active_profile": self.active_profile,
                 "created_at": timestamp,
                 "known_cells": self.known_cells,
                 "visited_frontiers": len(self.visited_points),
@@ -678,6 +741,7 @@ class AutoMappingManager(object):
                 "schema_version": 1,
                 "stamp": rospy.Time.now().to_sec() if not rospy.is_shutdown() else 0.0,
                 "request_id": self.request_id,
+                "active_profile": self.active_profile,
                 "state": self.state,
                 "stage": self.state,
                 "busy": self.state in ACTIVE_STATES or self.state == "paused",

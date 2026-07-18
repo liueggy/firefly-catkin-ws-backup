@@ -2,6 +2,8 @@ import os
 import unittest
 import xml.etree.ElementTree as ET
 
+import yaml
+
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -12,6 +14,36 @@ def read(relative):
 
 
 class LaunchContractTest(unittest.TestCase):
+    def test_teb_prefers_smooth_forward_motion_with_bounded_lateral_trim(self):
+        config = yaml.safe_load(read("config/nav/teb_local_planner_params.yaml"))[
+            "TebLocalPlannerROS"
+        ]
+        self.assertLessEqual(config["max_vel_y"], 0.05)
+        self.assertLessEqual(config["max_vel_theta"], 0.65)
+        self.assertLessEqual(config["acc_lim_x"], 0.40)
+        self.assertLessEqual(config["acc_lim_y"], 0.20)
+        self.assertLessEqual(config["acc_lim_theta"], 0.90)
+        self.assertGreaterEqual(config["weight_kinematics_forward_drive"], 10.0)
+        self.assertGreaterEqual(config["global_plan_viapoint_sep"], 0.30)
+        self.assertLessEqual(config["weight_viapoint"], 15.0)
+
+    def test_non_mapping_profiles_hard_disable_mapping_runtime(self):
+        manager = read("scripts/auto_mapping_manager.py")
+        safety = read("scripts/auto_mapping_safety.py")
+        self.assertIn("profile_allows_mapping", manager)
+        self.assertIn("set_sensor_subscriptions", manager)
+        self.assertIn('"profile_rejected"', manager)
+        self.assertIn("profile_allows_mapping", safety)
+        self.assertIn("self.mapping_profile_active", safety)
+
+    def test_mission_navigation_is_gated_by_fresh_scan_and_tf(self):
+        runner = read("scripts/inspection_servo_route_runner.py")
+        self.assertIn("navigation_sensor_health", runner)
+        self.assertIn('"navigation_sensor_stale"', runner)
+        self.assertIn("navigation_scan_timeout", runner)
+        self.assertIn("navigation_tf_timeout", runner)
+        self.assertIn("navigation_stale_grace", runner)
+
     def test_profiles_declare_authoritative_identity(self):
         for name in ("mapping", "navigation", "inspection"):
             text = read("launch/%s_profile.launch" % name)

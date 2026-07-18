@@ -1,6 +1,6 @@
-# TEB local planner parameters — balanced car-like profile.
-# max_vel_y=0.10: enough lateral freedom for smooth obstacle avoidance,
-#   but too slow to look like mecanum drifting (original was 0.20).
+# TEB local planner parameters — forward-preferred mecanum profile.
+# Keep a small lateral trim for obstacle avoidance while avoiding the visually
+# unstable diagonal/rotate motion produced by a fully free omni profile.
 TebLocalPlannerROS:
 
   odom_topic: /odom
@@ -15,19 +15,19 @@ TebLocalPlannerROS:
   wheelbase: 0.25
   cmd_angle_instead_rotvel: false
 
-  # Velocity limits: slight lateral (0.10) for obstacle avoidance, not drifting.
-  max_vel_x: 0.25
-  max_vel_x_backwards: 0.10
-  max_vel_y: 0.10
-  max_vel_trans: 0.25
+  # Velocity limits: normal travel is forward; lateral motion is corrective.
+  max_vel_x: 0.22
+  max_vel_x_backwards: 0.08
+  max_vel_y: 0.04
+  max_vel_trans: 0.22
   min_vel_trans: 0.01
-  max_vel_theta: 0.80
-  min_vel_theta: 0.05
+  max_vel_theta: 0.60
+  min_vel_theta: 0.08
 
   # --- 加速度限制 ---
-  acc_lim_x: 0.6
-  acc_lim_y: 0.3
-  acc_lim_theta: 1.2
+  acc_lim_x: 0.35
+  acc_lim_y: 0.15
+  acc_lim_theta: 0.80
 
   # --- 轨迹优化 ---
   dt_ref: 0.30
@@ -36,7 +36,7 @@ TebLocalPlannerROS:
   global_plan_overwrite_orientation: true
   allow_init_with_backwards_motion: false
   max_global_plan_lookahead_dist: 2.2
-  global_plan_viapoint_sep: 0.20
+  global_plan_viapoint_sep: 0.35
   max_samples: 500
   no_inner_iterations: 4
   no_outer_iterations: 3
@@ -44,8 +44,8 @@ TebLocalPlannerROS:
   optimization_verbose: false
 
   # --- 目标容差：位置准 + 朝向准 ---
-  xy_goal_tolerance: 0.12
-  yaw_goal_tolerance: 0.10
+  xy_goal_tolerance: 0.15
+  yaw_goal_tolerance: 0.15
   free_goal_vel: false
 
   # --- 障碍物 ---
@@ -60,7 +60,7 @@ TebLocalPlannerROS:
 
   # --- 权重：偏好前向，允许微调横移 ---
   weight_kinematics_nh: 0.0
-  weight_kinematics_forward_drive: 1.0
+  weight_kinematics_forward_drive: 20.0
   weight_max_vel_y: 1.0
   weight_acc_lim_y: 0.5
   weight_kinematics_turning_radius: 0.0
@@ -73,7 +73,7 @@ TebLocalPlannerROS:
   weight_acceleration_obstacle: 10.0
   weight_parallelity: 5.0
   weight_custom_obstacle: 10.0
-  weight_viapoint: 30.0
+  weight_viapoint: 12.0
 
   # --- 其它 ---
   enable_homotopy_class_planning: false
