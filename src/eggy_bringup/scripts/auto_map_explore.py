@@ -430,7 +430,7 @@ class FastAutoMapper:
             "_ymin:={}".format(rospy.get_param("~gmapping_ymin", -12.0)),
             "_xmax:={}".format(rospy.get_param("~gmapping_xmax", 12.0)),
             "_ymax:={}".format(rospy.get_param("~gmapping_ymax", 12.0)),
-            "_delta:={}".format(rospy.get_param("~gmapping_delta", 0.04)),
+            "_delta:={}".format(rospy.get_param("~gmapping_delta", 0.05)),
         ]
         self.publish_status("starting_gmapping")
         proc = subprocess.Popen(cmd)

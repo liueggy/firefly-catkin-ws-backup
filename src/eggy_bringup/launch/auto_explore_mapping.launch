@@ -49,7 +49,7 @@
   <arg name="gmapping_linear_update" default="0.15" />
   <arg name="gmapping_angular_update" default="0.15" />
   <arg name="gmapping_temporal_update" default="1.0" />
-  <arg name="gmapping_delta" default="0.04" />
+  <arg name="gmapping_delta" default="0.05" />
 
   <node pkg="eggy_bringup" type="auto_map_explore.py" name="auto_mapper" output="screen">
     <param name="duration_sec" value="$(arg duration_sec)" />

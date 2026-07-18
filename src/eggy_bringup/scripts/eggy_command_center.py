@@ -796,7 +796,7 @@ class EggyCommandCenter:
                 '_linearUpdate:=0.15 _angularUpdate:=0.15 '
                 '_temporalUpdate:=1.0 _particles:=20 '
                 '_xmin:=-8.0 _ymin:=-8.0 _xmax:=8.0 _ymax:=8.0 '
-                '_maxUrange:=8.0 _delta:=0.04',
+                '_maxUrange:=8.0 _delta:=0.05',
                 '/tmp/eggy_mode_switch_mapping.log'))
             mode_processes.append(self._launch_detached(
                 '/opt/ros/noetic/lib/move_base/move_base '

@@ -12,7 +12,7 @@
   <arg name="linear_update" default="0.15" />
   <arg name="angular_update" default="0.15" />
   <arg name="temporal_update" default="1.0" />
-  <arg name="delta" default="0.04" />
+  <arg name="delta" default="0.05" />
   <arg name="save_map" default="true" />
   <arg name="gmapping_quiet" default="false" />
 
