@@ -210,6 +210,12 @@ class LaunchContractTest(unittest.TestCase):
         self.assertIn("_wait_map_matches", fast_switch)
         self.assertIn("_wait_mode_ready", fast_switch)
 
+    def test_periodic_command_status_uses_compact_payload(self):
+        source = read("scripts/eggy_command_center.py")
+        self.assertIn("def build_status(self, detailed=True):", source)
+        self.assertIn("status = self.build_status(detailed=False)", source)
+        self.assertIn("if detailed:", source)
+
 
 if __name__ == "__main__":
     unittest.main()

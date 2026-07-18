@@ -188,18 +188,10 @@ class EggyCommandCenter:
     def publish_response(self, resp):
         self.pub_response.publish(String(json.dumps(resp, ensure_ascii=False)))
 
-    def build_status(self):
+    def build_status(self, detailed=True):
         nodes = rosnode_list()
-        topics = rostopic_list()
-        pub_map, sub_map = rostopic_pub_sub_state()
         node_state = {name: (name in nodes) for name in KNOWN_NODES}
         node_state['/kimi_inspection_server'] = http_service_alive('127.0.0.1', 8000)
-        topic_state = {name: {
-            'exists': (name in topics),
-            'publishers': pub_map.get(name, []),
-            'subscribers': sub_map.get(name, []),
-            'has_publisher': bool(pub_map.get(name, [])),
-        } for name in KEY_TOPICS}
 
         authority = dict(self.profile_status)
         mode = authority.get('mode', 'unknown')
@@ -207,38 +199,51 @@ class EggyCommandCenter:
         profile_state = authority.get('state', 'degraded')
 
         load1, load5, load15 = os.getloadavg()
-        camera_pid_code, camera_pid = run_cmd("pgrep -f '[e]ggy_camera_node.py' | head -1", timeout=2)
-        v4l2_code, v4l2_pid = run_cmd("pgrep -x v4l2-ctl | head -1", timeout=2)
-
-        active_map = {}
-        active_metadata = os.path.join(ACTIVE_MAP_LINK, 'metadata.json')
-        try:
-            with open(active_metadata, 'r', encoding='utf-8') as stream:
-                active_map = json.load(stream)
-            active_map['yaml'] = os.path.join(ACTIVE_MAP_LINK, 'map.yaml')
-        except Exception:
-            active_map = {}
-
         capabilities = authority.get('capabilities', {})
 
-        return {
+        status = {
             'stamp': self.now(),
             'mode': mode,
             'profile': profile,
             'state': profile_state,
             'loadavg': [round(load1, 2), round(load5, 2), round(load15, 2)],
             'nodes': node_state,
-            'topics': topic_state,
             'camera': {
                 'running': node_state.get('/eggy_camera', False),
-                'pid': camera_pid if camera_pid_code == 0 else '',
-                'v4l2_pid': v4l2_pid if v4l2_code == 0 else '',
             },
-            'active_map': active_map,
             'capabilities': capabilities,
             'auto_mapping': dict(self.auto_mapping_status),
             'profile_authority': '/eggy/nav_mode/status',
         }
+        if detailed:
+            topics = rostopic_list()
+            pub_map, sub_map = rostopic_pub_sub_state()
+            status['topics'] = {name: {
+                'exists': (name in topics),
+                'publishers': pub_map.get(name, []),
+                'subscribers': sub_map.get(name, []),
+                'has_publisher': bool(pub_map.get(name, [])),
+            } for name in KEY_TOPICS}
+
+            camera_pid_code, camera_pid = run_cmd(
+                "pgrep -f '[e]ggy_camera_node.py' | head -1", timeout=2)
+            v4l2_code, v4l2_pid = run_cmd(
+                "pgrep -x v4l2-ctl | head -1", timeout=2)
+            status['camera'].update({
+                'pid': camera_pid if camera_pid_code == 0 else '',
+                'v4l2_pid': v4l2_pid if v4l2_code == 0 else '',
+            })
+
+            active_map = {}
+            active_metadata = os.path.join(ACTIVE_MAP_LINK, 'metadata.json')
+            try:
+                with open(active_metadata, 'r', encoding='utf-8') as stream:
+                    active_map = json.load(stream)
+                active_map['yaml'] = os.path.join(ACTIVE_MAP_LINK, 'map.yaml')
+            except Exception:
+                active_map = {}
+            status['active_map'] = active_map
+        return status
 
     def wait_node_state(self, node_name, should_exist=True, timeout_sec=10.0):
         deadline = time.time() + timeout_sec
@@ -1289,7 +1294,7 @@ class EggyCommandCenter:
         rate = rospy.Rate(self.status_rate)
         while not rospy.is_shutdown():
             try:
-                status = self.build_status()
+                status = self.build_status(detailed=False)
                 self.last_status = status
                 self.pub_status.publish(String(json.dumps(status, ensure_ascii=False)))
             except Exception as exc:
