@@ -36,6 +36,10 @@ class LaunchContractTest(unittest.TestCase):
         costmap = read("config/nav/global_costmap_params.yaml")
         self.assertIn('type: "costmap_2d::StaticLayer"', costmap)
         self.assertIn("rolling_window: false", costmap)
+        command_center = read("scripts/eggy_command_center.py")
+        self.assertIn("global_costmap_params.yaml' if navigation", command_center)
+        self.assertIn("rospy.set_param('/move_base', move_base_params)",
+                      command_center)
 
     def test_system_launches_authoritative_cmd_vel_arbiter(self):
         system = read("launch/eggy_system.launch")

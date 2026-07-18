@@ -56,6 +56,8 @@ KEY_TOPICS = [
 
 MAP_LIBRARY_ROOT = '/root/catkin_ws/maps/library'
 ACTIVE_MAP_LINK = '/root/catkin_ws/maps/active'
+NAV_CONFIG_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), '..', 'config', 'nav'))
 
 
 def run_cmd(cmd, timeout=5):
@@ -78,6 +80,24 @@ def run_cmd(cmd, timeout=5):
             return 124, ((out or '').strip() + '\nTIMEOUT').strip()
     except Exception as exc:
         return 1, str(exc)
+
+
+def merge_parameter_tree(base, override):
+    merged = dict(base or {})
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = merge_parameter_tree(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def load_yaml_mapping(path):
+    with open(path, 'r', encoding='utf-8') as stream:
+        data = yaml.safe_load(stream) or {}
+    if not isinstance(data, dict):
+        raise ValueError('ROS parameter YAML root must be a mapping: %s' % path)
+    return data
 
 
 def http_service_alive(host, port):
@@ -604,15 +624,55 @@ class EggyCommandCenter:
     @staticmethod
     def _configure_runtime_navigation(mode):
         navigation = mode == 'navigation'
-        rospy.set_param('/move_base/base_local_planner',
-                        'teb_local_planner/TebLocalPlannerROS')
-        rospy.set_param('/move_base/base_global_planner', 'navfn/NavfnROS')
-        rospy.set_param('/move_base/controller_frequency',
-                        12.0 if navigation else 10.0)
-        rospy.set_param('/move_base/planner_frequency',
-                        1.0 if navigation else 1.5)
-        rospy.set_param('/move_base/global_costmap/static_map', navigation)
-        rospy.set_param('/move_base/global_costmap/rolling_window', False)
+        common = load_yaml_mapping(
+            os.path.join(NAV_CONFIG_ROOT, 'costmap_common_params.yaml'))
+        global_name = ('global_costmap_params.yaml' if navigation else
+                       'global_costmap_explore_params.yaml')
+        global_config = load_yaml_mapping(
+            os.path.join(NAV_CONFIG_ROOT, global_name)).get(
+                'global_costmap', {})
+        local_config = load_yaml_mapping(
+            os.path.join(NAV_CONFIG_ROOT, 'local_costmap_params.yaml')).get(
+                'local_costmap', {})
+        teb_config = load_yaml_mapping(
+            os.path.join(NAV_CONFIG_ROOT, 'teb_local_planner_params.yaml')).get(
+                'TebLocalPlannerROS', {})
+        move_base_params = {
+            'base_local_planner': 'teb_local_planner/TebLocalPlannerROS',
+            'base_global_planner': 'navfn/NavfnROS',
+            'controller_frequency': 12.0 if navigation else 10.0,
+            'planner_frequency': 1.0 if navigation else 1.5,
+            'planner_patience': 8.0,
+            'controller_patience': 12.0,
+            'conservative_reset_dist': 1.0,
+            'clearing_rotation_allowed': True,
+            'oscillation_timeout': 12.0,
+            'oscillation_distance': 0.3,
+            'max_planning_retries': 4,
+            'recovery_behavior_enabled': True,
+            'recovery_behaviors': [
+                {'name': 'conservative_reset',
+                 'type': 'clear_costmap_recovery/ClearCostmapRecovery'},
+                {'name': 'rotate_recovery',
+                 'type': 'rotate_recovery/RotateRecovery'},
+            ],
+            'conservative_reset': {
+                'reset_distance': 1.5,
+                'layer_names': ['obstacle_layer'],
+            },
+            'rotate_recovery': {
+                'max_vel_theta': 0.6,
+                'min_in_place_vel_theta': 0.25,
+                'frequency': 10.0,
+            },
+            'NavfnROS': {'default_tolerance': 0.30},
+            'global_costmap': merge_parameter_tree(common, global_config),
+            'local_costmap': merge_parameter_tree(common, local_config),
+            'TebLocalPlannerROS': teb_config,
+        }
+        if rospy.has_param('/move_base'):
+            rospy.delete_param('/move_base')
+        rospy.set_param('/move_base', move_base_params)
         if not navigation:
             return
         amcl = {
