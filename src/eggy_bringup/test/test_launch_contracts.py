@@ -45,6 +45,20 @@ class LaunchContractTest(unittest.TestCase):
         self.assertIn("failure_age >= scan_failure_exit_timeout", driver)
         self.assertIn("RPLIDAR scan stalled for %.1fs", driver)
 
+    def test_rplidar_omits_unused_intensity_samples_on_the_robot(self):
+        root = ET.fromstring(read("../rplidar_ros/launch/rplidar_a1.launch"))
+        node = root.find(".//node[@name='rplidarNode']")
+        self.assertIsNotNone(node)
+        params = {
+            item.attrib["name"]: item.attrib["value"]
+            for item in node.findall("param")
+        }
+        self.assertEqual("false", params["publish_intensity"])
+
+        driver = read("../rplidar_ros/src/node.cpp")
+        self.assertIn('param<bool>("publish_intensity"', driver)
+        self.assertIn("if (publish_intensity)", driver)
+
     def test_external_lidar_watchdog_covers_blocked_driver_reads(self):
         root = ET.fromstring(read("launch/eggy_system.launch"))
         lidar_group = root.find(".//group[@if='$(arg use_lidar)']")

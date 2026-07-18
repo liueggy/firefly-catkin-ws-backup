@@ -60,7 +60,8 @@ void publish_scan(ros::Publisher *pub,
                   double scan_time, bool inverted,
                   float angle_min, float angle_max,
                   float max_distance,
-                  std::string frame_id)
+                  std::string frame_id,
+                  bool publish_intensity)
 {
     static int scan_count = 0;
     sensor_msgs::LaserScan scan_msg;
@@ -85,7 +86,8 @@ void publish_scan(ros::Publisher *pub,
     scan_msg.range_min = 0.15;
     scan_msg.range_max = max_distance;//8.0;
 
-    scan_msg.intensities.resize(node_count);
+    if (publish_intensity)
+        scan_msg.intensities.resize(node_count);
     scan_msg.ranges.resize(node_count);
     bool reverse_data = (!inverted && reversed) || (inverted && !reversed);
     if (!reverse_data) {
@@ -95,7 +97,8 @@ void publish_scan(ros::Publisher *pub,
                 scan_msg.ranges[i] = std::numeric_limits<float>::infinity();
             else
                 scan_msg.ranges[i] = read_value;
-            scan_msg.intensities[i] = (float) (nodes[i].quality >> 2);
+            if (publish_intensity)
+                scan_msg.intensities[i] = (float) (nodes[i].quality >> 2);
         }
     } else {
         for (size_t i = 0; i < node_count; i++) {
@@ -104,7 +107,8 @@ void publish_scan(ros::Publisher *pub,
                 scan_msg.ranges[node_count-1-i] = std::numeric_limits<float>::infinity();
             else
                 scan_msg.ranges[node_count-1-i] = read_value;
-            scan_msg.intensities[node_count-1-i] = (float) (nodes[i].quality >> 2);
+            if (publish_intensity)
+                scan_msg.intensities[node_count-1-i] = (float) (nodes[i].quality >> 2);
         }
     }
 
@@ -234,6 +238,7 @@ int main(int argc, char * argv[]) {
     bool inverted = false;
     bool initial_reset = false;
     bool angle_compensate = true;    
+    bool publish_intensity = true;
     float angle_compensate_multiple = 1.0;//min 360 ponits at per 1 degree
     int points_per_circle = 360;//min 360 ponits at per circle 
     std::string scan_mode;
@@ -254,6 +259,7 @@ int main(int argc, char * argv[]) {
     nh_private.param<bool>("inverted", inverted, false);
     nh_private.param<bool>("initial_reset", initial_reset, false);
     nh_private.param<bool>("angle_compensate", angle_compensate, false);
+    nh_private.param<bool>("publish_intensity", publish_intensity, true);
     nh_private.param<std::string>("scan_mode", scan_mode, std::string());
     nh_private.param<double>("scan_failure_exit_timeout",
                              scan_failure_exit_timeout, 3.0);
@@ -445,7 +451,7 @@ int main(int argc, char * argv[]) {
                     publish_scan(&scan_pub, angle_compensate_nodes, angle_compensate_nodes_count,
                              start_scan_time, scan_duration, inverted,
                              angle_min, angle_max, max_distance,
-                             frame_id);
+                             frame_id, publish_intensity);
                 } else {
                     int start_node = 0, end_node = 0;
                     int i = 0;
@@ -462,7 +468,7 @@ int main(int argc, char * argv[]) {
                     publish_scan(&scan_pub, &nodes[start_node], end_node-start_node +1,
                              start_scan_time, scan_duration, inverted,
                              angle_min, angle_max, max_distance,
-                             frame_id);
+                             frame_id, publish_intensity);
                }
             } else if (op_result == SL_RESULT_OPERATION_FAIL) {
                 // All the data is invalid, just publish them
@@ -471,7 +477,7 @@ int main(int argc, char * argv[]) {
                 publish_scan(&scan_pub, nodes, count,
                              start_scan_time, scan_duration, inverted,
                              angle_min, angle_max, max_distance,
-                             frame_id);
+                             frame_id, publish_intensity);
             }
         } else {
             const ros::WallTime now = ros::WallTime::now();
