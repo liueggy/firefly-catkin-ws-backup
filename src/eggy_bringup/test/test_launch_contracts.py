@@ -52,6 +52,7 @@ class LaunchContractTest(unittest.TestCase):
 
     def test_cpp_odom_fuser_has_bounded_online_drift_correction(self):
         system = read("launch/eggy_system.launch")
+        self.assertIn('<param name="rate" value="30.0"', system)
         for name, value in (
                 ("wheel_yaw_correction_rate", "0.35"),
                 ("stationary_linear_threshold", "0.015"),

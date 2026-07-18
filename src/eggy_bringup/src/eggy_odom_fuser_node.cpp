@@ -18,7 +18,7 @@ class EggyOdomFuser {
     pnh_.param<std::string>("wheel_odom_topic", wheel_topic_, "/wheel_odom");
     pnh_.param<std::string>("imu_topic", imu_topic_, "/stm32/imu/data_raw");
     pnh_.param<bool>("publish_tf", publish_tf_, true);
-    pnh_.param<double>("rate", rate_hz_, 50.0);
+    pnh_.param<double>("rate", rate_hz_, 30.0);
     pnh_.param<int>("bias_samples", bias_samples_, 50);
     pnh_.param<double>("wheel_yaw_correction_rate",
                        wheel_yaw_correction_rate_, 0.35);
@@ -189,7 +189,7 @@ class EggyOdomFuser {
   std::string wheel_topic_;
   std::string imu_topic_;
   bool publish_tf_{true};
-  double rate_hz_{50.0};
+  double rate_hz_{30.0};
 };
 
 int main(int argc, char** argv) {

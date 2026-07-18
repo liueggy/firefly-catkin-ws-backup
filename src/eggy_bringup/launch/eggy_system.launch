@@ -111,7 +111,7 @@
       <param name="odom_frame_id" value="odom" />
       <param name="base_frame_id" value="base_link" />
       <param name="publish_tf" value="true" />
-      <param name="rate" value="50.0" />
+      <param name="rate" value="30.0" />
       <param name="wheel_yaw_correction_rate" value="0.35" />
       <param name="stationary_linear_threshold" value="0.015" />
       <param name="stationary_angular_threshold" value="0.025" />
