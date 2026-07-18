@@ -7,12 +7,13 @@
   <node name="move_base" pkg="move_base" type="move_base" output="screen" respawn="false">
     <rosparam file="$(find eggy_bringup)/config/nav/costmap_common_params.yaml" command="load" ns="global_costmap" />
     <rosparam file="$(find eggy_bringup)/config/nav/costmap_common_params.yaml" command="load" ns="local_costmap" />
-    <rosparam file="$(find eggy_bringup)/config/nav/global_costmap_explore_params.yaml" command="load" />
+    <rosparam file="$(find eggy_bringup)/config/nav/global_costmap_params.yaml" command="load" />
     <rosparam file="$(find eggy_bringup)/config/nav/local_costmap_params.yaml" command="load" />
     <rosparam file="$(find eggy_bringup)/config/nav/teb_local_planner_params.yaml" command="load" />
 
     <param name="base_local_planner" value="teb_local_planner/TebLocalPlannerROS" />
     <param name="base_global_planner" value="navfn/NavfnROS" />
+    <param name="NavfnROS/default_tolerance" value="0.30" />
     <param name="controller_frequency" value="$(arg controller_frequency)" />
     <param name="planner_frequency" value="$(arg planner_frequency)" />
     <param name="planner_patience" value="8.0" />

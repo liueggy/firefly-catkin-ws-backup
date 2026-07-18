@@ -1,8 +1,43 @@
-# 全局 costmap 参数
+# Saved-map navigation costmap. Keep this separate from frontier exploration so
+# AMCL navigation is never affected by rolling-window/exploration overrides.
 global_costmap:
   global_frame: map
   robot_base_frame: base_link
   update_frequency: 2.0
   publish_frequency: 1.0
   static_map: true
-  transform_tolerance: 0.3
+  rolling_window: false
+  map_topic: /map
+  transform_tolerance: 0.35
+  track_unknown_space: true
+  resolution: 0.05
+
+  plugins:
+  - {name: static_layer, type: "costmap_2d::StaticLayer"}
+  - {name: obstacle_layer, type: "costmap_2d::VoxelLayer"}
+  - {name: inflation_layer, type: "costmap_2d::InflationLayer"}
+
+  static_layer:
+    map_topic: /map
+    use_maximum: false
+    first_map_only: false
+    track_unknown_space: true
+    unknown_cost_value: 255
+    trinary_costmap: true
+    enabled: true
+
+  obstacle_layer:
+    observation_sources: laser_scan_sensor
+    laser_scan_sensor:
+      sensor_frame: laser_frame
+      data_type: LaserScan
+      topic: /scan
+      marking: true
+      clearing: true
+      max_obstacle_height: 2.0
+      min_obstacle_height: 0.05
+
+  inflation_layer:
+    inflation_radius: 0.22
+    cost_scaling_factor: 8.0
+    inflate_unknown: false

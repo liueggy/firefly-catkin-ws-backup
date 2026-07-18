@@ -24,6 +24,19 @@ class LaunchContractTest(unittest.TestCase):
             self.assertIn('from="cmd_vel" to="$(arg cmd_vel_topic)"', text)
             self.assertNotIn('to="/cmd_vel"', text)
 
+    def test_static_navigation_uses_saved_map_costmap_and_goal_tolerance(self):
+        navigation = read("launch/move_base_nav.launch")
+        self.assertIn("global_costmap_params.yaml", navigation)
+        self.assertNotIn("global_costmap_explore_params.yaml", navigation)
+        self.assertIn('name="NavfnROS/default_tolerance" value="0.30"',
+                      navigation)
+        mapping = read("launch/move_base_only.launch")
+        self.assertIn('name="NavfnROS/default_tolerance" value="0.30"',
+                      mapping)
+        costmap = read("config/nav/global_costmap_params.yaml")
+        self.assertIn('type: "costmap_2d::StaticLayer"', costmap)
+        self.assertIn("rolling_window: false", costmap)
+
     def test_system_launches_authoritative_cmd_vel_arbiter(self):
         system = read("launch/eggy_system.launch")
         self.assertIn('type="cmd_vel_arbiter.py"', system)

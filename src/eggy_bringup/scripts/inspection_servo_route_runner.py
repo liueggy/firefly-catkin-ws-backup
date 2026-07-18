@@ -19,6 +19,7 @@ import rospy
 from actionlib_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped, Quaternion, Twist
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
+from nav_msgs.srv import GetPlan
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
 import tf
@@ -55,6 +56,8 @@ class InspectionServoRouteRunner:
         self.route_file = rospy.get_param("~route_file", "")
         self.move_base_timeout = float(rospy.get_param("~move_base_timeout", 120.0))
         self.current_pose_timeout = float(rospy.get_param("~current_pose_timeout", 3.0))
+        self.plan_service_timeout = float(rospy.get_param("~plan_service_timeout", 3.0))
+        self.plan_tolerance = float(rospy.get_param("~plan_tolerance", 0.30))
         self.enable_kimi_after_search = bool(rospy.get_param("~enable_kimi_after_search", True))
         self.kimi_timeout = float(rospy.get_param("~kimi_timeout", 90.0))
         self.kimi_task = rospy.get_param("~kimi_task", "meter")
@@ -114,6 +117,7 @@ class InspectionServoRouteRunner:
 
         self.tf_listener = tf.TransformListener()
         self.client = actionlib.SimpleActionClient("/move_base", MoveBaseAction)
+        self.make_plan_client = rospy.ServiceProxy("/move_base/make_plan", GetPlan)
 
         rospy.Subscriber("/eggy/mission/request", String, self.on_request, queue_size=5)
         rospy.Subscriber("/eggy/emergency_stop", Bool,
@@ -455,6 +459,55 @@ class InspectionServoRouteRunner:
             last_error,
         ))
 
+    @staticmethod
+    def pose_stamped_from_waypoint(wp):
+        pose = PoseStamped()
+        pose.header.frame_id = wp.get("frame_id", "map")
+        pose.header.stamp = rospy.Time.now()
+        pose.pose.position.x = float(wp["x"])
+        pose.pose.position.y = float(wp["y"])
+        pose.pose.orientation = quat_from_yaw(float(wp.get("yaw", 0.0)))
+        return pose
+
+    def preflight_navigation_goal(self, wp):
+        """Validate reachability without handing motion ownership to move_base."""
+        if self.dry_run:
+            return {"ok": True, "plan_poses": 1, "attempts": 0}
+        try:
+            rospy.wait_for_service("/move_base/make_plan", self.plan_service_timeout)
+            start = self.pose_stamped_from_waypoint(self.current_pose_waypoint())
+            goal = self.pose_stamped_from_waypoint(wp)
+            for attempt in range(2):
+                response = self.make_plan_client(start, goal, self.plan_tolerance)
+                plan_poses = len(response.plan.poses)
+                if plan_poses > 0:
+                    return {
+                        "ok": True,
+                        "plan_poses": plan_poses,
+                        "attempts": attempt + 1,
+                        "tolerance": self.plan_tolerance,
+                    }
+                if attempt == 0:
+                    rospy.sleep(0.25)
+            return {
+                "ok": False,
+                "state": "no_global_plan",
+                "message": "no global plan to waypoint within %.2f m tolerance" %
+                           self.plan_tolerance,
+                "plan_poses": 0,
+                "attempts": 2,
+                "tolerance": self.plan_tolerance,
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "state": "plan_check_failed",
+                "message": "navigation preflight failed: %s" % exc,
+                "plan_poses": 0,
+                "attempts": 0,
+                "tolerance": self.plan_tolerance,
+            }
+
     def run_route(self, payload):
         started = time.time()
         waypoints = []
@@ -634,13 +687,21 @@ class InspectionServoRouteRunner:
         if self.dry_run:
             rospy.sleep(0.5)
             return {"ok": True, "state": GoalStatus.SUCCEEDED, "state_text": "DRY_RUN"}
+        preflight = self.preflight_navigation_goal(wp)
+        if not preflight.get("ok"):
+            self.publish_status(
+                "plan_unavailable",
+                preflight.get("message", "navigation goal is not reachable"),
+                {"waypoint": wp, "preflight": preflight},
+            )
+            return {
+                "ok": False,
+                "state": -2,
+                "state_text": "NO_GLOBAL_PLAN",
+                "preflight": preflight,
+            }
         goal = MoveBaseGoal()
-        goal.target_pose = PoseStamped()
-        goal.target_pose.header.frame_id = wp.get("frame_id", self.default_frame)
-        goal.target_pose.header.stamp = rospy.Time.now()
-        goal.target_pose.pose.position.x = wp["x"]
-        goal.target_pose.pose.position.y = wp["y"]
-        goal.target_pose.pose.orientation = quat_from_yaw(wp.get("yaw", 0.0))
+        goal.target_pose = self.pose_stamped_from_waypoint(wp)
         with self.lock:
             self.navigation_active = True
             self.expected_class = str(wp.get("expected_class", "any"))
@@ -660,6 +721,7 @@ class InspectionServoRouteRunner:
                         "ok": state == GoalStatus.SUCCEEDED,
                         "state": int(state),
                         "state_text": GOAL_STATUS_TEXT.get(state, str(state)),
+                        "preflight": preflight,
                     }
             self.client.cancel_goal()
             return {"ok": False, "state": -1, "state_text": "TIMEOUT"}

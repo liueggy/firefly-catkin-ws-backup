@@ -63,6 +63,11 @@ def _install_ros_stubs():
     move_base_msg.MoveBaseGoal = _Message
     sys.modules["move_base_msgs"] = move_base
     sys.modules["move_base_msgs.msg"] = move_base_msg
+    nav = types.ModuleType("nav_msgs")
+    nav_srv = types.ModuleType("nav_msgs.srv")
+    nav_srv.GetPlan = object
+    sys.modules["nav_msgs"] = nav
+    sys.modules["nav_msgs.srv"] = nav_srv
     sensor = types.ModuleType("sensor_msgs")
     sensor_msg = types.ModuleType("sensor_msgs.msg")
     sensor_msg.LaserScan = _Message
@@ -236,6 +241,23 @@ class MissionRunnerStateTest(unittest.TestCase):
         runner.handle_request(_Message(__import__("json").dumps(self.mission(False))))
         self.assertIn("rejected", runner.status_events)
         self.assertFalse(runner.busy)
+
+    def test_unplannable_goal_is_rejected_before_move_base_send(self):
+        runner = self.make_runner()
+        runner.dry_run = False
+        runner.preflight_navigation_goal = lambda _wp: {
+            "ok": False,
+            "state": "no_global_plan",
+            "message": "no global plan",
+        }
+        runner.navigate_to = types.MethodType(
+            runner_module.InspectionServoRouteRunner.navigate_to, runner)
+
+        result = runner.navigate_to(self.mission(False)["route"][0])
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("NO_GLOBAL_PLAN", result["state_text"])
+        self.assertIn("plan_unavailable", runner.status_events)
 
 
 if __name__ == "__main__":
