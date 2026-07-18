@@ -91,6 +91,14 @@ class LaunchContractTest(unittest.TestCase):
         self.assertIn('Subscriber("/scan", rospy.AnyMsg', voice)
         self.assertIn("node_refresh_period", health)
         self.assertIn("self.alive_nodes_cache", health)
+        self.assertIn("'/eggy/nav_mode/status'", health)
+        self.assertIn("self.active_profile", health)
+        self.assertIn("active_profile == 'inspection'", health)
+
+        command_center = read("scripts/eggy_command_center.py")
+        self.assertIn("free_thresh < occupied_thresh", command_center)
+        self.assertIn("parsed['occupied_thresh'] = 0.65", command_center)
+        self.assertIn("parsed['free_thresh'] = 0.196", command_center)
 
     def test_voice_controller_is_enabled_in_every_runtime_profile(self):
         for name in ("mapping", "navigation", "inspection"):

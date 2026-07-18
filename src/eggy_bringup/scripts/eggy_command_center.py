@@ -939,6 +939,31 @@ class EggyCommandCenter:
         if pgm_bytes[:2] not in (b'P5', b'P6'):
             return self.make_response(req, False, 'PGM 文件头校验失败，需要标准 PGM 文件')
 
+        try:
+            parsed = yaml.safe_load(yaml_text) or {}
+            required = ('resolution', 'origin', 'negate',
+                        'occupied_thresh', 'free_thresh')
+            missing = [key for key in required if key not in parsed]
+            if (missing or not isinstance(parsed.get('origin'), list)
+                    or len(parsed['origin']) != 3):
+                raise ValueError(
+                    'YAML 缺少必需字段或 origin 格式错误: ' + ','.join(missing))
+            occupied_thresh = float(parsed['occupied_thresh'])
+            free_thresh = float(parsed['free_thresh'])
+            if not (0.0 <= free_thresh < occupied_thresh <= 1.0):
+                rospy.logwarn(
+                    '地图阈值无效 free=%s occupied=%s，自动恢复 map_server 默认值',
+                    free_thresh, occupied_thresh)
+                parsed['occupied_thresh'] = 0.65
+                parsed['free_thresh'] = 0.196
+            parsed['image'] = './map.pgm'
+            yaml_text = yaml.safe_dump(
+                parsed, allow_unicode=True, sort_keys=False)
+            yaml_bytes = yaml_text.encode('utf-8')
+        except Exception as exc:
+            return self.make_response(
+                req, False, '地图 YAML 校验失败', {'error': str(exc)})
+
         digest = hashlib.sha256(yaml_bytes + b'\0' + pgm_bytes).hexdigest()
         map_id = safe_name + '_' + digest[:8]
         os.makedirs(MAP_LIBRARY_ROOT, exist_ok=True)
@@ -947,16 +972,10 @@ class EggyCommandCenter:
         pgm_path = os.path.join(dest_dir, 'map.pgm')
         staging_dir = tempfile.mkdtemp(prefix='.staging-', dir=MAP_LIBRARY_ROOT)
         try:
-            parsed = yaml.safe_load(yaml_text) or {}
-            required = ('resolution', 'origin', 'negate', 'occupied_thresh', 'free_thresh')
-            missing = [key for key in required if key not in parsed]
-            if missing or not isinstance(parsed.get('origin'), list) or len(parsed['origin']) != 3:
-                raise ValueError('YAML 缺少必需字段或 origin 格式错误: ' + ','.join(missing))
-            parsed['image'] = './map.pgm'
             stage_yaml = os.path.join(staging_dir, 'map.yaml')
             stage_pgm = os.path.join(staging_dir, 'map.pgm')
             with open(stage_yaml, 'w', encoding='utf-8') as f:
-                yaml.safe_dump(parsed, f, allow_unicode=True, sort_keys=False)
+                f.write(yaml_text)
                 f.flush()
                 os.fsync(f.fileno())
             with open(stage_pgm, 'wb') as f:

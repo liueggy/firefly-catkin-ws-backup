@@ -18,13 +18,14 @@ Qt 客户端订阅后可一屏看全所有子系统状况。
 level: 0=OK 1=WARN 2=ERROR 3=STALE
 注: /diagnostics 上 stm32_base_driver 也在发底盘串口诊断，多发布者共存聚合。
 """
+import json
 import rospy
 import socket
 import threading
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from sensor_msgs.msg import LaserScan, BatteryState, CompressedImage
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Float32, UInt8
+from std_msgs.msg import Float32, String, UInt8
 from actionlib_msgs.msg import GoalStatusArray
 
 # ---- 阈值 (可按需改) ----
@@ -81,6 +82,10 @@ class HealthAggregator:
         self.nav_status = None      # 最近一个 GoalStatus 的 status
         self.nav_text = ''
         self.nav_status_time = None
+        # Profile status is the command center's authoritative runtime mode.
+        # Node presence is only a startup fallback because navigation keeps
+        # inspection support nodes available without enabling inspection.
+        self.active_profile = ''
         self.node_refresh_period = max(
             1.0, float(rospy.get_param('~node_refresh_period', 3.0)))
         self.alive_nodes_cache = set()
@@ -98,6 +103,8 @@ class HealthAggregator:
         rospy.Subscriber('/base/flag_stop', UInt8, self._on_flag, queue_size=1)
         rospy.Subscriber('/move_base/status', GoalStatusArray,
                          self._on_navstatus, queue_size=1)
+        rospy.Subscriber('/eggy/nav_mode/status', String,
+                         self._on_profile_status, queue_size=1)
 
         self.pub = rospy.Publisher('/diagnostics', DiagnosticArray, queue_size=10)
 
@@ -153,6 +160,18 @@ class HealthAggregator:
                 self.nav_status = None
                 self.nav_text = ''
                 self.nav_status_time = None
+
+    def _on_profile_status(self, msg):
+        try:
+            payload = json.loads(msg.data)
+            profile = str(payload.get('profile', '')).strip().lower()
+        except (TypeError, ValueError, AttributeError):
+            rospy.logwarn_throttle(10.0, '忽略无法解析的 /eggy/nav_mode/status')
+            return
+        if profile not in ('mapping', 'navigation', 'inspection'):
+            return
+        with self.lock:
+            self.active_profile = profile
 
     # ---- 系统信息 ----
     def _read_system(self):
@@ -237,14 +256,23 @@ class HealthAggregator:
         alive = set(self.alive_nodes_cache)
         map_server_alive = any(
             n == '/map_server' or n.startswith('/map_server_') for n in alive)
-        amcl_mode = '/amcl' in alive or map_server_alive
         inspection_nodes = ['/meter_rknn_detect_cpp', '/kimi_inspection_server',
                             '/kimi_inspection_bridge', '/inspection_servo_route_runner']
         kimi_server_alive = http_service_alive('127.0.0.1', 8000)
-        inspection_mode = amcl_mode and (
-            any(n in alive for n in inspection_nodes if n != '/kimi_inspection_server')
-            or kimi_server_alive
-        )
+        with self.lock:
+            active_profile = self.active_profile
+        if active_profile:
+            amcl_mode = active_profile != 'mapping'
+            inspection_mode = active_profile == 'inspection'
+        else:
+            # Startup compatibility fallback until the first authoritative
+            # status arrives from ros_qt5_gui_adapter.
+            amcl_mode = '/amcl' in alive or map_server_alive
+            inspection_mode = amcl_mode and (
+                any(n in alive for n in inspection_nodes
+                    if n != '/kimi_inspection_server')
+                or kimi_server_alive
+            )
         mode_nodes = ['/amcl'] if amcl_mode else ['/slam_gmapping']
         required_nodes = KEY_NODES + mode_nodes
         pairs = [('定位模式', '巡检' if inspection_mode else ('AMCL' if amcl_mode else '建图'))]
