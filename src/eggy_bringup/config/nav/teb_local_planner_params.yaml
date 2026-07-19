@@ -1,6 +1,6 @@
-# TEB local planner parameters — forward-preferred mecanum profile.
-# Keep a small lateral trim for obstacle avoidance while avoiding the visually
-# unstable diagonal/rotate motion produced by a fully free omni profile.
+# TEB local planner parameters — constrained omnidirectional mecanum profile.
+# Lateral motion continuously removes cross-track error, but remains bounded
+# below half the forward speed to avoid diagonal surges and heading oscillation.
 TebLocalPlannerROS:
 
   odom_topic: /odom
@@ -15,28 +15,31 @@ TebLocalPlannerROS:
   wheelbase: 0.25
   cmd_angle_instead_rotvel: false
 
-  # Velocity limits: normal travel is forward; lateral motion is corrective.
+  # Velocity limits: forward travel remains dominant; lateral motion is a
+  # continuous correction channel instead of an occasional low-speed trim.
   max_vel_x: 0.27
   max_vel_x_backwards: 0.10
-  max_vel_y: 0.07
-  max_vel_trans: 0.29
+  max_vel_y: 0.12
+  max_vel_trans: 0.30
   min_vel_trans: 0.01
-  max_vel_theta: 0.68
+  max_vel_theta: 0.62
   min_vel_theta: 0.08
 
   # --- 加速度限制 ---
   acc_lim_x: 0.45
-  acc_lim_y: 0.22
-  acc_lim_theta: 1.00
+  acc_lim_y: 0.28
+  acc_lim_theta: 0.85
 
   # --- 轨迹优化 ---
   dt_ref: 0.25
   dt_hysteresis: 0.06
   teb_autosize: true
-  global_plan_overwrite_orientation: true
+  # Preserve the commanded chassis heading along the path so mecanum lateral
+  # correction does not repeatedly become rotate-then-drive motion.
+  global_plan_overwrite_orientation: false
   allow_init_with_backwards_motion: false
   max_global_plan_lookahead_dist: 2.2
-  global_plan_viapoint_sep: 0.35
+  global_plan_viapoint_sep: 0.45
   max_samples: 500
   no_inner_iterations: 4
   no_outer_iterations: 3
@@ -58,11 +61,11 @@ TebLocalPlannerROS:
   # --- 可行性检查 ---
   feasibility_check_no_poses: 2
 
-  # --- 权重：偏好前向，允许微调横移 ---
+  # --- 权重：全向模型，前进优先，横移在边界内平滑修正 ---
   weight_kinematics_nh: 0.0
   weight_kinematics_forward_drive: 12.0
-  weight_max_vel_y: 1.0
-  weight_acc_lim_y: 0.5
+  weight_max_vel_y: 2.0
+  weight_acc_lim_y: 1.0
   weight_kinematics_turning_radius: 0.0
   weight_optimaltime: 1.5
   weight_shortest_path: 10.0
@@ -73,7 +76,7 @@ TebLocalPlannerROS:
   weight_acceleration_obstacle: 10.0
   weight_parallelity: 5.0
   weight_custom_obstacle: 10.0
-  weight_viapoint: 10.0
+  weight_viapoint: 8.0
 
   # --- 其它 ---
   enable_homotopy_class_planning: false

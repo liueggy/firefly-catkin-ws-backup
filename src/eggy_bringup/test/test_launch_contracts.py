@@ -14,21 +14,24 @@ def read(relative):
 
 
 class LaunchContractTest(unittest.TestCase):
-    def test_teb_prefers_smooth_forward_motion_with_bounded_lateral_trim(self):
+    def test_teb_uses_stable_constrained_omnidirectional_motion(self):
         config = yaml.safe_load(read("config/nav/teb_local_planner_params.yaml"))[
             "TebLocalPlannerROS"
         ]
         self.assertGreaterEqual(config["max_vel_x"], 0.25)
         self.assertLessEqual(config["max_vel_x"], 0.28)
-        self.assertGreaterEqual(config["max_vel_y"], 0.06)
-        self.assertLessEqual(config["max_vel_y"], 0.08)
-        self.assertLessEqual(config["max_vel_theta"], 0.70)
+        self.assertGreaterEqual(config["max_vel_y"], 0.10)
+        self.assertLessEqual(config["max_vel_y"], 0.14)
+        self.assertLessEqual(config["max_vel_y"], config["max_vel_x"] * 0.5)
+        self.assertLessEqual(config["max_vel_theta"], 0.65)
         self.assertLessEqual(config["acc_lim_x"], 0.45)
-        self.assertLessEqual(config["acc_lim_y"], 0.22)
-        self.assertLessEqual(config["acc_lim_theta"], 1.00)
+        self.assertLessEqual(config["acc_lim_y"], 0.30)
+        self.assertLessEqual(config["acc_lim_theta"], 0.90)
+        self.assertEqual(config["weight_kinematics_nh"], 0.0)
         self.assertGreaterEqual(config["weight_kinematics_forward_drive"], 10.0)
-        self.assertGreaterEqual(config["global_plan_viapoint_sep"], 0.30)
-        self.assertLessEqual(config["weight_viapoint"], 15.0)
+        self.assertFalse(config["global_plan_overwrite_orientation"])
+        self.assertGreaterEqual(config["global_plan_viapoint_sep"], 0.40)
+        self.assertLessEqual(config["weight_viapoint"], 10.0)
         self.assertLessEqual(config["oscillation_v_eps"], 0.06)
         self.assertLessEqual(config["oscillation_omega_eps"], 0.10)
         self.assertLessEqual(config["oscillation_recovery_min_duration"], 2.5)
