@@ -47,6 +47,15 @@ class LaunchContractTest(unittest.TestCase):
         self.assertIn("profile_allows_mapping", safety)
         self.assertIn("self.mapping_profile_active", safety)
 
+    def test_inactive_mapping_heartbeat_cannot_preempt_navigation(self):
+        safety = read("scripts/auto_mapping_safety.py")
+        self.assertIn("was_active = self.active", safety)
+        self.assertIn("if was_active and not active:", safety)
+        self.assertNotIn(
+            "if not active:\n            self.output_pub.publish(Twist())",
+            safety,
+        )
+
     def test_mission_navigation_is_gated_by_fresh_scan_and_tf(self):
         runner = read("scripts/inspection_servo_route_runner.py")
         self.assertIn("navigation_sensor_health", runner)

@@ -133,6 +133,7 @@ class AutoMappingSafety(object):
     def active_cb(self, msg):
         active = bool(msg.data) and self.mapping_profile_active
         with self.lock:
+            was_active = self.active
             self.active = active
             self.last_scan = 0.0
             if not self.active:
@@ -140,7 +141,10 @@ class AutoMappingSafety(object):
                 self.raw_twist = Twist()
                 self.last_reason = "inactive"
         self.set_scan_subscription(active)
-        if not active:
+        # Publish one stop only when leaving an active mapping session. The
+        # manager repeats inactive heartbeats; publishing for each heartbeat
+        # creates a fresh high-priority mapping lease that masks navigation.
+        if was_active and not active:
             self.output_pub.publish(Twist())
 
     def profile_cb(self, msg):
