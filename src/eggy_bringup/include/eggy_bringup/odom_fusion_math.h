@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace eggy_bringup {
 
@@ -23,6 +24,12 @@ inline double LearnStationaryGyroBias(double current_bias, double gyro_z,
                                       double learning_rate) {
   const double gain = (std::max)(0.0, (std::min)(learning_rate, 1.0));
   return current_bias + gain * (gyro_z - current_bias);
+}
+
+inline std::pair<double, double> BodyVelocityToWorld(double vx, double vy,
+                                                      double yaw) {
+  return {vx * std::cos(yaw) - vy * std::sin(yaw),
+          vx * std::sin(yaw) + vy * std::cos(yaw)};
 }
 
 }  // namespace eggy_bringup

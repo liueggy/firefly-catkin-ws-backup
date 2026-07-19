@@ -143,6 +143,49 @@ class MissionRunnerStateTest(unittest.TestCase):
             {"x1": 0, "y1": 0, "x2": 10, "y2": 10},
             {"x1": 0, "y1": 0, "x2": 10, "y2": 10}))
 
+    def test_visible_target_stops_search_before_full_stability(self):
+        runner = self.make_runner()
+        runner.search_max_age = 0.8
+        runner.search_acquire_frames = 1
+        runner.search_stable_frames = 4
+        runner.detection_candidate = {
+            "stamp": __import__("time").time(), "stable_frames": 1,
+            "class_name": "pressure_gauge",
+        }
+        self.assertIsNotNone(runner.visible_detection_candidate())
+        self.assertIsNone(runner.current_detection_candidate())
+
+    def test_brief_detector_dropout_keeps_target_lock(self):
+        runner = self.make_runner()
+        runner.navigation_active = False
+        runner.search_active = True
+        runner.current_mission = {"inspection": {"enabled": True}}
+        runner.expected_class = "pressure_gauge"
+        runner.search_min_score = 0.5
+        runner.search_max_age = 0.8
+        runner.detection_lost_grace = 0.65
+        runner.detection_candidate = None
+        runner.detection_stable_count = 0
+        runner.last_detection_class = ""
+        detection = {
+            "image_width": 640, "image_height": 480,
+            "detections": [{"class_name": "pressure_gauge", "score": 0.9,
+                            "x1": 250, "y1": 100, "x2": 390, "y2": 360}],
+        }
+        runner.on_detection(_Message(__import__("json").dumps(detection)))
+        locked = dict(runner.detection_candidate)
+        runner.on_detection(_Message(__import__("json").dumps({
+            "image_width": 640, "image_height": 480, "detections": []})))
+        self.assertEqual(locked, runner.detection_candidate)
+
+    def test_alignment_hysteresis_is_wider_than_entry_deadband(self):
+        runner = self.make_runner()
+        runner.align_center_deadband = 0.12
+        runner.align_exit_deadband = 0.18
+        self.assertTrue(runner.is_centered_error(0.11, already_centered=False))
+        self.assertTrue(runner.is_centered_error(0.16, already_centered=True))
+        self.assertFalse(runner.is_centered_error(0.16, already_centered=False))
+
     def mission(self, return_home=False, inspection_enabled=False):
         mission = {
             "request_id": "mission-1", "mission_type": "navigation",

@@ -716,8 +716,9 @@ class EggyCommandCenter:
             'odom_model_type': 'omni',
             'min_particles': 100,
             'max_particles': 500,
-            'update_min_d': 0.10,
-            'update_min_a': 0.20,
+            'update_min_d': 0.05,
+            'update_min_a': 0.08,
+            'resample_interval': 1,
             'laser_max_range': 8.0,
             'laser_min_range': 0.15,
             'laser_max_beams': 60,
@@ -755,7 +756,11 @@ class EggyCommandCenter:
             '_default_frame:=map _base_frame:=base_link '
             '_inspection_capable:=' + inspection +
             ' _cmd_vel_topic:=/cmd_vel/mission _enable_kimi_after_search:=' +
-            inspection,
+            inspection +
+            ' _search_acquire_frames:=1 _search_stable_frames:=4 '
+            '_detection_lost_grace:=0.9 _align_center_deadband:=0.12 '
+            '_align_exit_deadband:=0.18 _align_kp:=1.25 '
+            '_align_max_wz:=0.30 _align_min_wz:=0.05',
             '/tmp/eggy_mode_switch_runner.log')
         if profile != 'inspection':
             return

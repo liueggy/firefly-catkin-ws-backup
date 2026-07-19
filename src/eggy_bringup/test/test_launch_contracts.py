@@ -266,6 +266,30 @@ class LaunchContractTest(unittest.TestCase):
         self.assertEqual("$(arg meter_image_topic)", params["image_topic"])
         self.assertEqual("$(arg meter_overlay_topic)", params["overlay_comp_topic"])
 
+    def test_inspection_lock_and_amcl_updates_are_tuned_for_slow_omni_motion(self):
+        root = ET.fromstring(read("launch/eggy_system.launch"))
+        args = {item.attrib["name"]: item.attrib.get("default") for item in root.findall("arg")}
+        self.assertLessEqual(int(args["inspection_search_stable_frames"]), 4)
+        self.assertLessEqual(float(args["inspection_align_max_wz"]), 0.30)
+        runner = root.find(".//node[@name='inspection_servo_route_runner']")
+        runner_params = {
+            item.attrib["name"]: item.attrib["value"]
+            for item in runner.findall("param")
+        }
+        self.assertIn("search_acquire_frames", runner_params)
+        self.assertIn("detection_lost_grace", runner_params)
+        self.assertIn("align_exit_deadband", runner_params)
+
+        amcl = root.find(".//node[@name='amcl']")
+        amcl_params = {
+            item.attrib["name"]: item.attrib["value"]
+            for item in amcl.findall("param")
+        }
+        self.assertEqual("omni", amcl_params["odom_model_type"])
+        self.assertLessEqual(float(amcl_params["update_min_d"]), 0.05)
+        self.assertLessEqual(float(amcl_params["update_min_a"]), 0.10)
+        self.assertEqual("1", amcl_params["resample_interval"])
+
     def test_meter_overlay_stays_live_between_inference_frames(self):
         detector = read("src/meter_rknn_detect_node.cpp")
         self.assertIn("publish_cached_overlay", detector)

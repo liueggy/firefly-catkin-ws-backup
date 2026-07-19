@@ -13,8 +13,9 @@
     <param name="odom_model_type" value="omni" />
     <param name="min_particles" value="100" />
     <param name="max_particles" value="500" />
-    <param name="update_min_d" value="0.10" />
-    <param name="update_min_a" value="0.20" />
+    <param name="update_min_d" value="0.05" />
+    <param name="update_min_a" value="0.08" />
+    <param name="resample_interval" value="1" />
     <param name="laser_max_range" value="8.0" />
     <param name="laser_min_range" value="0.15" />
     <param name="laser_max_beams" value="60" />

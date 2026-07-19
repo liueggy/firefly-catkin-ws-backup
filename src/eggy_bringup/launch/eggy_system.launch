@@ -41,7 +41,9 @@
   <arg name="inspection_move_base_timeout" default="120" />
   <arg name="inspection_search_timeout" default="30" />
   <arg name="inspection_search_min_score" default="0.55" />
-  <arg name="inspection_search_stable_frames" default="10" />
+  <arg name="inspection_search_stable_frames" default="4" />
+  <arg name="inspection_search_acquire_frames" default="1" />
+  <arg name="inspection_detection_lost_grace" default="0.9" />
   <arg name="inspection_search_angular_speed_deg" default="18" />
   <arg name="inspection_search_step_deg" default="90" />
   <arg name="inspection_search_step_pause_sec" default="1.0" />
@@ -49,8 +51,9 @@
   <arg name="inspection_align_timeout" default="8.0" />
   <arg name="inspection_align_center_deadband" default="0.12" />
   <arg name="inspection_align_hold_sec" default="0.45" />
-  <arg name="inspection_align_kp" default="1.8" />
-  <arg name="inspection_align_max_wz" default="0.42" />
+  <arg name="inspection_align_exit_deadband" default="0.18" />
+  <arg name="inspection_align_kp" default="1.25" />
+  <arg name="inspection_align_max_wz" default="0.30" />
   <arg name="inspection_scan_timeout" default="0.6" />
   <arg name="inspection_rotation_clearance" default="0.32" />
   <arg name="inspection_roi_padding_ratio" default="0.18" />
@@ -141,8 +144,9 @@
       <param name="odom_model_type" value="omni" />
       <param name="min_particles" value="100" />
       <param name="max_particles" value="500" />
-      <param name="update_min_d" value="0.10" />
-      <param name="update_min_a" value="0.20" />
+      <param name="update_min_d" value="0.05" />
+      <param name="update_min_a" value="0.08" />
+      <param name="resample_interval" value="1" />
       <param name="laser_max_range" value="8.0" />
       <param name="laser_min_range" value="0.15" />
       <param name="laser_max_beams" value="60" />
@@ -270,6 +274,8 @@
       <param name="search_timeout" value="$(arg inspection_search_timeout)" />
       <param name="search_min_score" value="$(arg inspection_search_min_score)" />
       <param name="search_stable_frames" value="$(arg inspection_search_stable_frames)" />
+      <param name="search_acquire_frames" value="$(arg inspection_search_acquire_frames)" />
+      <param name="detection_lost_grace" value="$(arg inspection_detection_lost_grace)" />
       <param name="search_angular_speed_deg" value="$(arg inspection_search_angular_speed_deg)" />
       <param name="search_step_deg" value="$(arg inspection_search_step_deg)" />
       <param name="search_step_pause_sec" value="$(arg inspection_search_step_pause_sec)" />
@@ -277,6 +283,7 @@
       <param name="search_max_rotation_deg" value="360.0" />
       <param name="align_timeout" value="$(arg inspection_align_timeout)" />
       <param name="align_center_deadband" value="$(arg inspection_align_center_deadband)" />
+      <param name="align_exit_deadband" value="$(arg inspection_align_exit_deadband)" />
       <param name="align_hold_sec" value="$(arg inspection_align_hold_sec)" />
       <param name="align_kp" value="$(arg inspection_align_kp)" />
       <param name="align_max_wz" value="$(arg inspection_align_max_wz)" />

@@ -45,12 +45,16 @@ class EggyOdomFuser {
 
       nav_msgs::Odometry wheel;
       double yaw = 0.0;
+      double x = 0.0;
+      double y = 0.0;
       bool ready = false;
       {
         std::lock_guard<std::mutex> lock(mutex_);
         if (has_wheel_ && has_yaw_) {
           wheel = latest_wheel_;
           yaw = base_yaw_;
+          x = fused_x_;
+          y = fused_y_;
           ready = true;
         }
       }
@@ -70,6 +74,8 @@ class EggyOdomFuser {
       out.header.frame_id = odom_frame_;
       out.child_frame_id = base_frame_;
       out.pose.pose.position = wheel.pose.pose.position;
+      out.pose.pose.position.x = x;
+      out.pose.pose.position.y = y;
       out.pose.pose.orientation = quatFromYaw(yaw);
       out.pose.covariance = wheel.pose.covariance;
       out.twist.twist.linear = wheel.twist.twist.linear;
@@ -110,6 +116,24 @@ class EggyOdomFuser {
 
   void wheelCb(const nav_msgs::Odometry::ConstPtr& msg) {
     std::lock_guard<std::mutex> lock(mutex_);
+    const double stamp = (msg->header.stamp.isZero() ? ros::Time::now()
+                                                     : msg->header.stamp).toSec();
+    if (!has_wheel_position_) {
+      fused_x_ = msg->pose.pose.position.x;
+      fused_y_ = msg->pose.pose.position.y;
+      last_wheel_stamp_ = stamp;
+      has_wheel_position_ = true;
+    } else {
+      const double dt = stamp - last_wheel_stamp_;
+      last_wheel_stamp_ = stamp;
+      if (dt > 0.0 && dt <= 0.2) {
+        const auto velocity = eggy_bringup::BodyVelocityToWorld(
+            msg->twist.twist.linear.x, msg->twist.twist.linear.y,
+            has_yaw_ ? base_yaw_ : yawFromQuat(msg->pose.pose.orientation));
+        fused_x_ += velocity.first * dt;
+        fused_y_ += velocity.second * dt;
+      }
+    }
     latest_wheel_ = *msg;
     has_wheel_ = true;
   }
@@ -171,9 +195,13 @@ class EggyOdomFuser {
   std::mutex mutex_;
   nav_msgs::Odometry latest_wheel_;
   bool has_wheel_{false};
+  bool has_wheel_position_{false};
   bool has_bias_{false};
   bool has_yaw_{false};
   double base_yaw_{0.0};
+  double fused_x_{0.0};
+  double fused_y_{0.0};
+  double last_wheel_stamp_{0.0};
   double gyro_bias_{0.0};
   double bias_sum_{0.0};
   int bias_count_{0};
