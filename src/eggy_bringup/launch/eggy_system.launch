@@ -62,8 +62,11 @@
   <arg name="use_shell_bridge" default="true" />
   <arg name="use_nav_mode_status" default="true" />
   <arg name="use_usart1" default="true" />
+  <arg name="use_gps" default="true" />
   <arg name="use_voice_controller" default="true" />
   <arg name="usart1_port" default="/dev/eggy_usart1" />
+  <arg name="gps_baud" default="9600" />
+  <arg name="gps_frame_id" default="gps_link" />
   <arg name="default_temperature" default="25.0" />
   <arg name="default_humidity" default="50.0" />
   <arg name="dht_publish_rate" default="1.0" />
@@ -360,6 +363,17 @@
       <param name="default_temperature" value="$(arg default_temperature)" />
       <param name="default_humidity" value="$(arg default_humidity)" />
       <param name="dht_publish_rate" value="$(arg dht_publish_rate)" />
+    </node>
+  </group>
+
+  <!-- USB GPS: direct PyUSB access avoids the broken out-of-tree CH341 kernel module. -->
+  <group if="$(arg use_gps)">
+    <node pkg="eggy_bringup" type="eggy_gps_pyusb_node.py" name="eggy_gps_pyusb" output="screen" respawn="true" respawn_delay="2">
+      <param name="vendor_id" value="0x1a86" />
+      <param name="product_id" value="0x7523" />
+      <param name="baud" value="$(arg gps_baud)" />
+      <param name="frame_id" value="$(arg gps_frame_id)" />
+      <param name="reconnect_sec" value="2.0" />
     </node>
   </group>
 

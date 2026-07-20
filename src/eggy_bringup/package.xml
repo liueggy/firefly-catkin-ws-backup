@@ -23,6 +23,7 @@
 
   <exec_depend>roscpp</exec_depend>
   <exec_depend>rospy</exec_depend>
+  <exec_depend>python3-usb</exec_depend>
   <exec_depend>actionlib</exec_depend>
   <exec_depend>move_base_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
