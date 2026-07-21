@@ -1,0 +1,61 @@
+#!/bin/bash
+# sensor-watchdog: sensor hotplug fallback with profile-aware camera policy.
+# The camera is a navigation/inspection resource; mapping must not auto-start it.
+
+set -u
+
+declare -A DEVS
+DEVS["rplidar"]="/dev/rplidar"
+DEVS["camera"]="/dev/orbbec_rgb23"
+DEVS["usart1"]="/dev/eggy_usart1"
+
+declare -A NODES
+NODES["rplidar"]="/rplidarNode"
+NODES["camera"]="/eggy_camera"
+NODES["usart1"]="/eggy_usart1_node"
+
+profile_allows_camera() {
+  local profile
+  profile=$(rosparam get /eggy_nav_mode_status/profile 2>/dev/null || true)
+  case "$profile" in
+    navigation|inspection) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+stop_camera() {
+  rosnode kill /eggy_camera 2>/dev/null || true
+  # Bracket expression prevents this watchdog shell from matching itself.
+  pkill -TERM -f '[e]ggy_camera_node\.py' 2>/dev/null || true
+  pkill -TERM -f '/opt/ros/noetic/lib/topic_tools/relay' 2>/dev/null || true
+}
+
+while true; do
+  for dev in "${!DEVS[@]}"; do
+    devpath="${DEVS[$dev]}"
+    rosnode="${NODES[$dev]}"
+
+    if [ "$dev" = "camera" ] && ! profile_allows_camera; then
+      if rosnode ping "$rosnode" -c1 >/dev/null 2>&1; then
+        echo "[sensor-watchdog] mapping profile, stopping camera"
+        stop_camera
+      fi
+      continue
+    fi
+
+    if [ -e "$devpath" ]; then
+      if ! rosnode ping "$rosnode" -c1 >/dev/null 2>&1; then
+        echo "[sensor-watchdog] $dev detected, starting node..."
+        case "$dev" in
+          rplidar) rosrun rplidar_ros rplidarNode >/dev/null 2>&1 & ;;
+          camera) eggy-camera-start >/dev/null 2>&1 & ;;
+          usart1) : ;;
+        esac
+      fi
+    elif rosnode ping "$rosnode" -c1 >/dev/null 2>&1; then
+      echo "[sensor-watchdog] $dev removed, stopping node..."
+      rosnode kill "$rosnode" 2>/dev/null || true
+    fi
+  done
+  sleep 5
+done
