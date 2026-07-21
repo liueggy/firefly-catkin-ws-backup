@@ -14,6 +14,11 @@ def read(relative):
 
 
 class LaunchContractTest(unittest.TestCase):
+    def test_terminal_allows_read_only_ifconfig(self):
+        bridge = read("scripts/eggy_shell_bridge.py")
+        self.assertIn('"ifconfig"', bridge)
+        self.assertIn("shell operators and redirections are not allowed", bridge)
+
     def test_teb_uses_stable_constrained_omnidirectional_motion(self):
         config = yaml.safe_load(read("config/nav/teb_local_planner_params.yaml"))[
             "TebLocalPlannerROS"

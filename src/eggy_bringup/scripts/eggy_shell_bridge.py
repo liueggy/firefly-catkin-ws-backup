@@ -20,7 +20,7 @@ from std_msgs.msg import String
 PLAIN_COMMANDS = {
     "pwd", "uname", "hostname", "date", "uptime", "whoami", "id", "ls", "stat",
     "df", "du", "free", "cat", "head", "tail", "grep", "find", "ps", "pgrep",
-    "ip", "iw", "iwgetid", "lsusb", "lspci", "dmesg", "journalctl",
+    "ip", "ifconfig", "iw", "iwgetid", "lsusb", "lspci", "dmesg", "journalctl",
 }
 ROS_SUBCOMMANDS = {
     "rosnode": {"list", "info", "ping", "machine", "cleanup", "kill"},
