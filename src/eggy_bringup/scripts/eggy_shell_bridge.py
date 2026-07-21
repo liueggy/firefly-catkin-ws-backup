@@ -66,6 +66,16 @@ def validate_command(command):
     if any(part in BLOCKED_WORDS for part in lowered):
         raise ValueError("destructive or privileged command pattern blocked")
     program = os.path.basename(argv[0]).lower()
+    if program == "clearmap":
+        if len(argv) != 1:
+            raise ValueError("clearmap does not accept arguments")
+        request = (
+            'data: \'{"command":"mapping_reset","target":"mapping",'
+            '"params":{},"request_id":"qt-terminal-clearmap"}\''
+        )
+        return [
+            "rostopic", "pub", "-1", "/eggy/command/request", "std_msgs/String", request
+        ], True
     if program == "roslaunch":
         if len(argv) < 3 or argv[1] != "eggy_bringup" or argv[2] != "auto_explore_mapping.launch":
             raise ValueError("only auto_explore_mapping.launch can be started from this terminal")
