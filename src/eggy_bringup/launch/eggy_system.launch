@@ -198,11 +198,21 @@
   <!-- Automatic mapping uses a fail-closed velocity path. Raw move_base output is never an arbiter source. -->
   <group if="$(arg use_auto_mapping)">
     <node pkg="eggy_bringup" type="auto_mapping_safety.py"
-          name="eggy_auto_mapping_safety" output="screen" respawn="true" respawn_delay="2.0" />
+          name="eggy_auto_mapping_safety" output="screen" respawn="true" respawn_delay="2.0">
+      <param name="scan_timeout" value="0.50" />
+      <param name="rotation_clearance" value="0.26" />
+    </node>
     <node pkg="eggy_bringup" type="auto_mapping_manager.py"
           name="eggy_auto_mapping_manager" output="screen" respawn="false">
       <param name="require_battery" value="true" />
       <param name="map_library_root" value="/root/catkin_ws/maps/library" />
+      <param name="min_elapsed_sec" value="30.0" />
+      <param name="goal_timeout" value="45.0" />
+      <param name="goal_progress_timeout" value="12.0" />
+      <param name="goal_progress_distance" value="0.08" />
+      <param name="failed_frontier_radius" value="1.1" />
+      <param name="failed_frontier_penalty" value="12.0" />
+      <param name="replan_delay" value="0.8" />
     </node>
   </group>
 

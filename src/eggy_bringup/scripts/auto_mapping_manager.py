@@ -70,6 +70,8 @@ class AutoMappingManager(object):
         self.home_pose = None
         self.current_goal = None
         self.current_goal_started = 0.0
+        self.goal_best_distance = None
+        self.goal_last_progress_at = 0.0
         self.visited_points = []
         self.failed_points = []
         self.frontier_count = 0
@@ -88,7 +90,12 @@ class AutoMappingManager(object):
         self.scan_timeout = float(rospy.get_param("~scan_timeout", 0.8))
         self.odom_timeout = float(rospy.get_param("~odom_timeout", 0.8))
         self.preflight_timeout = float(rospy.get_param("~preflight_timeout", 12.0))
-        self.goal_timeout = float(rospy.get_param("~goal_timeout", 90.0))
+        self.goal_timeout = float(rospy.get_param("~goal_timeout", 45.0))
+        self.goal_progress_timeout = float(rospy.get_param("~goal_progress_timeout", 12.0))
+        self.goal_progress_distance = float(rospy.get_param("~goal_progress_distance", 0.08))
+        self.failed_frontier_radius = float(rospy.get_param("~failed_frontier_radius", 1.1))
+        self.failed_frontier_penalty = float(rospy.get_param("~failed_frontier_penalty", 12.0))
+        self.replan_delay = float(rospy.get_param("~replan_delay", 0.8))
         self.observe_sec = float(rospy.get_param("~observe_sec", 1.5))
         self.planning_period = float(rospy.get_param("~planning_period", 1.0))
         self.min_known_cells = int(rospy.get_param("~min_known_cells", 800))
@@ -323,6 +330,8 @@ class AutoMappingManager(object):
             self.result_details = {}
             self.home_pose = None
             self.current_goal = None
+            self.goal_best_distance = None
+            self.goal_last_progress_at = 0.0
             self.visited_points = []
             self.failed_points = []
             self.frontier_count = 0
@@ -468,7 +477,11 @@ class AutoMappingManager(object):
         )
         clusters = [item for item in clusters if math.hypot(
             item["x"] - pose[0], item["y"] - pose[1]) >= self.min_goal_distance]
-        ranked = rank_frontiers(clusters, pose[:2], visited, failed)
+        rank_options = {
+            "weights": {"failed": self.failed_frontier_penalty},
+            "failed_radius": self.failed_frontier_radius,
+        }
+        ranked = rank_frontiers(clusters, pose[:2], visited, failed, **rank_options)
         self.publish_frontiers(ranked)
         reachable = []
         for candidate in ranked[:max(1, self.max_candidate_plans)]:
@@ -478,7 +491,7 @@ class AutoMappingManager(object):
             item = dict(candidate)
             item["path_length"] = path_length
             reachable.append(item)
-        reachable = rank_frontiers(reachable, pose[:2], visited, failed)
+        reachable = rank_frontiers(reachable, pose[:2], visited, failed, **rank_options)
         with self.lock:
             self.frontier_count = len(ranked)
             self.reachable_frontier_count = len(reachable)
@@ -497,11 +510,29 @@ class AutoMappingManager(object):
         with self.lock:
             self.current_goal = dict(candidate, yaw=yaw)
             self.current_goal_started = time.time()
+            self.goal_best_distance = math.hypot(
+                candidate["x"] - pose[0], candidate["y"] - pose[1])
+            self.goal_last_progress_at = self.current_goal_started
             self.state = "returning" if returning else "navigating"
             self.state_started_at = time.time()
             self.message = "正在返回起点" if returning else "正在前往新的探索区域"
         self.goal_pub.publish(goal_pose)
         self.publish_status(force=True)
+
+    def reject_current_goal(self, now, message):
+        self.move_base.cancel_goal()
+        with self.lock:
+            goal = self.current_goal
+            if goal:
+                self.failed_points.append((goal["x"], goal["y"]))
+            self.recovery_count += 1
+            self.current_goal = None
+            self.goal_best_distance = None
+            self.goal_last_progress_at = 0.0
+            self.state = "planning"
+            self.state_started_at = now
+            self.last_plan_time = now - max(0.0, self.planning_period - self.replan_delay)
+            self.message = message
 
     def pose_stamped(self, x, y, yaw):
         pose = PoseStamped()
@@ -685,6 +716,8 @@ class AutoMappingManager(object):
                     if state == "navigating" and goal:
                         self.visited_points.append((goal["x"], goal["y"]))
                     self.current_goal = None
+                    self.goal_best_distance = None
+                    self.goal_last_progress_at = 0.0
                 if state == "returning":
                     self.begin_final_scan()
                 else:
@@ -693,24 +726,29 @@ class AutoMappingManager(object):
                         self.observe_until = now + self.observe_sec
                         self.message = "已到达探索点，等待地图稳定"
             elif action_state in (GoalStatus.ABORTED, GoalStatus.REJECTED, GoalStatus.LOST):
-                with self.lock:
-                    goal = self.current_goal
-                    if goal:
-                        self.failed_points.append((goal["x"], goal["y"]))
-                    self.recovery_count += 1
-                    self.current_goal = None
-                    self.state = "planning"
-                    self.message = "目标不可达，已重新规划"
+                if state == "returning":
+                    self.begin_final_scan()
+                else:
+                    self.reject_current_goal(now, "目标不可达，已更换探索区域")
             elif now - self.current_goal_started > self.goal_timeout:
-                self.move_base.cancel_all_goals()
+                if state == "returning":
+                    self.begin_final_scan()
+                else:
+                    self.reject_current_goal(now, "目标执行超时，已更换探索区域")
+            elif state == "navigating":
+                pose = self.robot_pose()
                 with self.lock:
-                    goal = self.current_goal
-                    if goal:
-                        self.failed_points.append((goal["x"], goal["y"]))
-                    self.recovery_count += 1
-                    self.current_goal = None
-                    self.state = "planning"
-                    self.message = "目标执行超时，已重新规划"
+                    goal = dict(self.current_goal) if self.current_goal else None
+                    best_distance = self.goal_best_distance
+                    last_progress = self.goal_last_progress_at
+                if pose is not None and goal is not None:
+                    distance = math.hypot(goal["x"] - pose[0], goal["y"] - pose[1])
+                    if best_distance is None or distance <= best_distance - self.goal_progress_distance:
+                        with self.lock:
+                            self.goal_best_distance = distance
+                            self.goal_last_progress_at = now
+                    elif last_progress and now - last_progress >= self.goal_progress_timeout:
+                        self.reject_current_goal(now, "目标无进展，已更换探索区域")
 
         elif state == "observing" and now >= self.observe_until:
             with self.lock:

@@ -14,6 +14,15 @@ def read(relative):
 
 
 class LaunchContractTest(unittest.TestCase):
+    def test_auto_mapping_has_bounded_stuck_recovery(self):
+        launch = read("launch/eggy_system.launch")
+        manager = read("scripts/auto_mapping_manager.py")
+        self.assertIn('name="min_elapsed_sec" value="30.0"', launch)
+        self.assertIn('name="goal_progress_timeout" value="12.0"', launch)
+        self.assertIn('name="rotation_clearance" value="0.26"', launch)
+        self.assertIn("goal_best_distance", manager)
+        self.assertIn("目标无进展，已更换探索区域", manager)
+
     def test_terminal_allows_read_only_ifconfig(self):
         bridge = read("scripts/eggy_shell_bridge.py")
         self.assertIn('"ifconfig"', bridge)

@@ -99,6 +99,11 @@ class AutoMappingCoreTest(unittest.TestCase):
         })
         self.assertEqual("start", start["command"])
         self.assertEqual(600.0, start["options"]["max_duration_sec"])
+        short = validate_mapping_request({
+            "schema_version": 1, "request_id": "short", "command": "start",
+            "options": {"max_duration_sec": 5},
+        })
+        self.assertEqual(30.0, short["options"]["max_duration_sec"])
         with self.assertRaises(ValueError):
             validate_mapping_request({"schema_version": 2, "command": "start"})
         with self.assertRaises(ValueError):
