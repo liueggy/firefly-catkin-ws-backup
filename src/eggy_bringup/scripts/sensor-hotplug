@@ -1,0 +1,55 @@
+#!/bin/bash
+# sensor-hotplug: udev 热插拔触发器
+# Camera startup is profile-gated: mapping/unknown never starts it.
+SENSOR=${1:-}
+ACTION=${2:-}
+LOGFILE=/tmp/sensor-hotplug.log
+PENDING_DIR=/tmp/sensor-hotplug
+
+source /opt/ros/noetic/setup.bash 2>/dev/null || true
+source /root/catkin_ws/devel/setup.bash 2>/dev/null || true
+
+echo "[$(date)] sensor-hotplug: $SENSOR $ACTION" >> "$LOGFILE"
+
+if ! rostopic list >/dev/null 2>&1; then
+  mkdir -p "$PENDING_DIR"
+  echo "$SENSOR $ACTION $(date +%s)" >> "$PENDING_DIR/pending"
+  echo "ROS not ready, queued $SENSOR $ACTION" >> "$LOGFILE"
+  exit 0
+fi
+
+camera_profile_allows_start() {
+  local profile
+  profile=$(rosparam get /eggy_nav_mode_status/profile 2>/dev/null || true)
+  case "$profile" in
+    navigation|inspection) return 0 ;;
+    *) echo "[$(date)] camera add ignored; profile=${profile:-unknown}" >> "$LOGFILE"; return 1 ;;
+  esac
+}
+
+case "$SENSOR" in
+  rplidar)
+    if [ "$ACTION" = "add" ]; then
+      rosrun rplidar_ros rplidarNode >/dev/null 2>&1 &
+    else
+      rosnode kill /rplidarNode 2>/dev/null || true
+    fi
+    ;;
+  camera)
+    if [ "$ACTION" = "add" ]; then
+      if camera_profile_allows_start; then
+        eggy-camera-start >/dev/null 2>&1 &
+      fi
+    else
+      eggy-camera-stop >/dev/null 2>&1 || true
+    fi
+    ;;
+  usart1)
+    if [ "$ACTION" = "add" ]; then
+      rosrun eggy_bringup eggy_usart1_node.py >/dev/null 2>&1 &
+    else
+      rosnode kill /eggy_usart1_node 2>/dev/null || true
+    fi
+    ;;
+esac
+echo "[$(date)] sensor-hotplug done: $SENSOR $ACTION" >> "$LOGFILE"
