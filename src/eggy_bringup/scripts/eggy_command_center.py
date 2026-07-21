@@ -616,7 +616,11 @@ class EggyCommandCenter:
                         sorted(graceful_targets)))
             except Exception:
                 pass
-            time.sleep(0.5)
+            # ROS node shutdown unregisters from the master asynchronously.  A
+            # short grace period is enough in practice; the old 0.5 s pause was
+            # followed by unconditional TERM/KILL sweeps and made every switch
+            # pay for process cleanup twice.
+            time.sleep(0.2)
         patterns = [
             r"[r]oslaunch.*eggy_bringup.*mapping_light\.launch",
             r"[r]oslaunch eggy_bringup move_base_only\.launch",
@@ -634,15 +638,20 @@ class EggyCommandCenter:
             r"[k]imi_inspection_server\.py",
             r"[k]imi_inspection_bridge\.py",
         ]
-        terminate = "; ".join(
-            "pkill -TERM -f '%s' 2>/dev/null || true" % pattern
-            for pattern in patterns)
-        force = "; ".join(
-            "pkill -KILL -f '%s' 2>/dev/null || true" % pattern
-            for pattern in patterns)
-        run_cmd(terminate, timeout=3)
-        time.sleep(0.4)
-        run_cmd(force, timeout=3)
+        # Only fall back to process matching when a node did not unregister.
+        # This keeps the normal path fast and avoids broad pkill calls blocking
+        # the command-center callback thread during a mode transition.
+        for pattern in patterns:
+            code, _ = run_cmd("pgrep -f '%s'" % pattern, timeout=0.5)
+            if code == 0:
+                run_cmd("pkill -TERM -f '%s' 2>/dev/null || true" % pattern,
+                        timeout=0.8)
+        time.sleep(0.15)
+        for pattern in patterns:
+            code, _ = run_cmd("pgrep -f '%s'" % pattern, timeout=0.5)
+            if code == 0:
+                run_cmd("pkill -KILL -f '%s' 2>/dev/null || true" % pattern,
+                        timeout=0.8)
         self._purge_runtime_registrations()
 
     def _set_runtime_profile(self, profile, map_file=""):
@@ -894,7 +903,10 @@ class EggyCommandCenter:
             raise ValueError('map_file is required for navigation')
         profile = profile or ('mapping' if mode == 'mapping' else 'navigation')
         started = time.monotonic()
+        phases = {}
+        phase_started = started
         self._stop_runtime_mode()
+        phases['stop_runtime_sec'] = round(time.monotonic() - phase_started, 3)
 
         mode_processes = []
         if mode == 'mapping':
@@ -917,16 +929,14 @@ class EggyCommandCenter:
             quoted_map = shlex.quote(map_file)
             self._set_runtime_profile(profile, map_file)
             self._configure_runtime_navigation('navigation')
-            self._launch_detached(
+            map_server_process = self._launch_detached(
                 '/opt/ros/noetic/lib/map_server/map_server ' + quoted_map,
                 '/tmp/eggy_mode_switch_mapserver.log')
-            map_ok, map_details = self._wait_map_matches(map_file, timeout_sec=8.0)
-            if not map_ok:
-                return False, {
-                    'mode': 'unknown',
-                    'map_ready': False,
-                    'map_details': map_details,
-                }
+            # AMCL and move_base can start while map_server is publishing.  ROS
+            # nodes already wait for their required topics, so launching them
+            # in parallel removes a serial map-server -> AMCL -> move_base gap.
+            phase_started = time.monotonic()
+            mode_processes.append(map_server_process)
             mode_processes.append(self._launch_detached(
                 '/opt/ros/noetic/lib/amcl/amcl scan:=/scan __name:=amcl',
                 '/tmp/eggy_mode_switch_amcl.log'))
@@ -936,6 +946,16 @@ class EggyCommandCenter:
                 'move_base_simple/goal:=/nav_goal __name:=move_base',
                 '/tmp/eggy_mode_switch_movebase.log'))
             self._launch_runtime_support(profile)
+            map_ok, map_details = self._wait_map_matches(map_file, timeout_sec=6.0)
+            phases['launch_navigation_sec'] = round(time.monotonic() - phase_started, 3)
+            if not map_ok:
+                self._stop_runtime_mode()
+                return False, {
+                    'mode': 'unknown',
+                    'map_ready': False,
+                    'map_details': map_details,
+                    'phases': phases,
+                }
 
         expected = 'static_nav' if mode == 'navigation' else 'mapping_slam'
         ok, status = self._wait_mode_ready(
@@ -944,6 +964,10 @@ class EggyCommandCenter:
             status['mode'] = expected
         status['profile'] = profile
         status['elapsed_sec'] = round(time.monotonic() - started, 3)
+        phases['ready_wait_sec'] = round(
+            time.monotonic() - started - phases['stop_runtime_sec'] -
+            phases.get('launch_navigation_sec', 0.0), 3)
+        status['phases'] = phases
         return ok, status
 
     def handle_switch_nav_mode(self, req):
