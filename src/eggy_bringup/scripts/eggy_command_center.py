@@ -758,9 +758,12 @@ class EggyCommandCenter:
             ' _cmd_vel_topic:=/cmd_vel/mission _enable_kimi_after_search:=' +
             inspection +
             ' _search_acquire_frames:=1 _search_stable_frames:=4 '
-            '_detection_lost_grace:=0.9 _align_center_deadband:=0.12 '
-            '_align_exit_deadband:=0.18 _align_kp:=1.25 '
-            '_align_max_wz:=0.30 _align_min_wz:=0.05',
+            '_detection_lost_grace:=0.9 _search_angular_speed_deg:=12 '
+            '_search_step_deg:=45 _align_center_deadband:=0.12 '
+            '_align_exit_deadband:=0.18 _align_kp:=0.65 '
+            '_align_max_wz:=0.14 _align_near_max_wz:=0.07 '
+            '_align_min_wz:=0.025 _align_control_max_age:=0.45 '
+            '_align_reacquire_timeout:=1.2 _angular_accel:=0.55',
             '/tmp/eggy_mode_switch_runner.log')
         if profile != 'inspection':
             return

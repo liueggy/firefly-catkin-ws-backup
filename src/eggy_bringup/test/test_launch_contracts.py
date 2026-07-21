@@ -317,6 +317,16 @@ class LaunchContractTest(unittest.TestCase):
         self.assertLessEqual(float(amcl_params["update_min_a"]), 0.10)
         self.assertEqual("1", amcl_params["resample_interval"])
 
+    def test_fast_profile_switch_does_not_restore_aggressive_alignment(self):
+        command_center = read("scripts/eggy_command_center.py")
+        self.assertIn("_search_angular_speed_deg:=12", command_center)
+        self.assertIn("_search_step_deg:=45", command_center)
+        self.assertIn("_align_kp:=0.65", command_center)
+        self.assertIn("_align_max_wz:=0.14", command_center)
+        self.assertIn("_align_control_max_age:=0.45", command_center)
+        self.assertNotIn("_align_kp:=1.25", command_center)
+        self.assertNotIn("_align_max_wz:=0.30", command_center)
+
     def test_meter_overlay_stays_live_between_inference_frames(self):
         detector = read("src/meter_rknn_detect_node.cpp")
         self.assertIn("publish_cached_overlay", detector)
