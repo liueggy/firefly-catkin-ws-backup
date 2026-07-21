@@ -628,7 +628,7 @@ class EggyCommandCenter:
             r"/opt/ros/noetic/lib/amcl/[a]mcl",
             r"/opt/ros/noetic/lib/move_base/[m]ove_base",
             r"[e]ggy_camera_node\.py",
-            r"[t]opic_tools relay.*/camera/front/image_source/compressed",
+            r"/opt/ros/noetic/lib/topic_tools/relay",
             r"[i]nspection_servo_route_runner\.py",
             r"[m]eter_rknn_detect_node",
             r"[k]imi_inspection_server\.py",
@@ -846,6 +846,16 @@ class EggyCommandCenter:
                        'map_ready': False})
         return False, status
 
+    def _wait_topic_publisher(self, topic, timeout_sec=3.0):
+        """Wait for a publisher registration without consuming the topic."""
+        deadline = time.time() + max(0.2, timeout_sec)
+        while time.time() < deadline and not rospy.is_shutdown():
+            _nodes, publishers = self._runtime_graph_state()
+            if publishers.get(topic):
+                return True
+            time.sleep(0.1)
+        return False
+
     def _wait_map_matches(self, yaml_path, timeout_sec=6.0):
         """Wait until /static_map serves the exact selected map metadata."""
         try:
@@ -944,6 +954,18 @@ class EggyCommandCenter:
             status['mode'] = expected
         status['profile'] = profile
         status['elapsed_sec'] = round(time.monotonic() - started, 3)
+        if profile != 'mapping':
+            source_ready = self._wait_topic_publisher(
+                '/camera/front/image_source/compressed', timeout_sec=1.5)
+            qt_ready = self._wait_topic_publisher(
+                '/camera/front/image/compressed',
+                timeout_sec=1.5 if profile == 'navigation' else 0.5)
+            status['camera_source_ready'] = source_ready
+            status['camera_qt_ready'] = qt_ready
+            status['camera_state'] = (
+                'ready' if source_ready and qt_ready else
+                'starting' if source_ready else 'degraded')
+            status['elapsed_sec'] = round(time.monotonic() - started, 3)
         return ok, status
 
     def handle_switch_nav_mode(self, req):
