@@ -181,10 +181,6 @@ class EggyCommandCenter:
             '~camera_output_topic', '/camera/front/image/compressed')
         self.last_status = {}
         self.mode_switch_gate = SwitchGate()
-        # Popen launch groups owned by the current profile.  Keeping the
-        # handles lets the next transition reap wrappers even if ROS shutdown
-        # happens before the child node has registered with the master.
-        self.runtime_processes = []
         rospy.loginfo('eggy_command_center started: request=/eggy/command/request response=/eggy/command/response status=/eggy/command/status')
 
     def on_profile_status(self, msg):
@@ -601,38 +597,8 @@ class EggyCommandCenter:
                 except Exception:
                     pass
 
-    @staticmethod
-    def _kill_process_pattern(pattern, signal_value):
-        """Signal matching runtime PIDs without killing this command center."""
-        code, output = run_cmd("pgrep -f '%s'" % pattern, timeout=1)
-        if code != 0:
-            return
-        own_pid = os.getpid()
-        for value in output.splitlines():
-            try:
-                pid = int(value.strip())
-            except ValueError:
-                continue
-            if pid == own_pid or pid <= 1:
-                continue
-            try:
-                os.kill(pid, signal_value)
-            except ProcessLookupError:
-                pass
-            except PermissionError:
-                continue
-
     def _stop_runtime_mode(self):
         """Stop only profile-specific processes; keep the base and ROSBridge alive."""
-        for process in list(self.runtime_processes):
-            if process.poll() is not None:
-                continue
-            try:
-                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
-        self.runtime_processes = []
-        time.sleep(0.15)
         nodes, _publishers = self._runtime_graph_state()
         graceful_targets = {
             '/slam_gmapping', '/amcl', '/move_base', '/eggy_camera',
@@ -668,11 +634,15 @@ class EggyCommandCenter:
             r"[k]imi_inspection_server\.py",
             r"[k]imi_inspection_bridge\.py",
         ]
-        for pattern in patterns:
-            self._kill_process_pattern(pattern, signal.SIGTERM)
+        terminate = "; ".join(
+            "pkill -TERM -f '%s' 2>/dev/null || true" % pattern
+            for pattern in patterns)
+        force = "; ".join(
+            "pkill -KILL -f '%s' 2>/dev/null || true" % pattern
+            for pattern in patterns)
+        run_cmd(terminate, timeout=3)
         time.sleep(0.25)
-        for pattern in patterns:
-            self._kill_process_pattern(pattern, signal.SIGKILL)
+        run_cmd(force, timeout=3)
         self._purge_runtime_registrations()
 
     def _set_runtime_profile(self, profile, map_file=""):
@@ -838,7 +808,6 @@ class EggyCommandCenter:
             preexec_fn=os.setsid,
             close_fds=True,
         )
-        self.runtime_processes.append(process)
         return process
 
     def _wait_mode_ready(self, mode, timeout_sec=4.0, processes=None):
