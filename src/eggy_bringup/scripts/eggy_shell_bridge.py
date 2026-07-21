@@ -69,13 +69,7 @@ def validate_command(command):
     if program == "clearmap":
         if len(argv) != 1:
             raise ValueError("clearmap does not accept arguments")
-        request = (
-            'data: \'{"command":"mapping_reset","target":"mapping",'
-            '"params":{},"request_id":"qt-terminal-clearmap"}\''
-        )
-        return [
-            "rostopic", "pub", "-1", "/eggy/command/request", "std_msgs/String", request
-        ], True
+        return ["clearmap"], False
     if program == "roslaunch":
         if len(argv) < 3 or argv[1] != "eggy_bringup" or argv[2] != "auto_explore_mapping.launch":
             raise ValueError("only auto_explore_mapping.launch can be started from this terminal")
@@ -137,6 +131,7 @@ class ShellBridge:
     def __init__(self):
         self.output_pub = rospy.Publisher("/eggy/shell/output", String, queue_size=100)
         self.status_pub = rospy.Publisher("/eggy/shell/status", String, queue_size=20, latch=True)
+        self.command_request_pub = rospy.Publisher("/eggy/command/request", String, queue_size=10)
         self.request_sub = rospy.Subscriber("/eggy/shell/request", String, self.on_request, queue_size=10)
         self.cancel_sub = rospy.Subscriber("/eggy/shell/cancel", String, self.on_cancel, queue_size=10)
         self.lock = threading.Lock()
@@ -209,6 +204,9 @@ class ShellBridge:
                 pass
 
     def execute(self, command_id, argv, needs_ros, timeout, output_limit):
+        if argv == ["clearmap"]:
+            self.execute_clearmap(command_id)
+            return
         if needs_ros:
             command = [
                 "/bin/bash", "-lc",
@@ -280,6 +278,39 @@ class ShellBridge:
         except Exception as exc:
             if process is not None and process.poll() is None:
                 self.terminate_group(process)
+            self.publish_status(state="failed", command_id=command_id, exit_code=None, error=str(exc))
+        finally:
+            with self.lock:
+                self.process = None
+                self.command_id = ""
+                self.cancel_reason = ""
+
+    def execute_clearmap(self, command_id):
+        started = time.monotonic()
+        try:
+            self.publish_status(state="running", command_id=command_id, command="clearmap")
+            deadline = started + 1.0
+            while self.command_request_pub.get_num_connections() == 0 and time.monotonic() < deadline:
+                time.sleep(0.02)
+            if self.command_request_pub.get_num_connections() == 0:
+                raise RuntimeError("mapping command center is unavailable")
+            request = {
+                "command": "mapping_reset",
+                "target": "mapping",
+                "params": {},
+                "request_id": "qt-terminal-%s" % command_id,
+            }
+            self.command_request_pub.publish(String(data=json.dumps(request, ensure_ascii=False)))
+            self.output_pub.publish(json_message(
+                command_id=command_id, sequence=0, stream="stdout",
+                data="clearmap 已提交：正在清空当前地图并重新启动建图。\n",
+            ))
+            self.publish_status(
+                state="completed", command_id=command_id, exit_code=0,
+                output_bytes=0, output_truncated=False,
+                duration=round(time.monotonic() - started, 3),
+            )
+        except Exception as exc:
             self.publish_status(state="failed", command_id=command_id, exit_code=None, error=str(exc))
         finally:
             with self.lock:

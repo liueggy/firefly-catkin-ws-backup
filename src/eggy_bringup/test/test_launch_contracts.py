@@ -22,8 +22,9 @@ class LaunchContractTest(unittest.TestCase):
     def test_terminal_clearmap_routes_to_mapping_reset(self):
         bridge = read("scripts/eggy_shell_bridge.py")
         self.assertIn('program == "clearmap"', bridge)
-        self.assertIn('"command":"mapping_reset"', bridge)
-        self.assertIn('"target":"mapping"', bridge)
+        self.assertIn('"command": "mapping_reset"', bridge)
+        self.assertIn('"target": "mapping"', bridge)
+        self.assertIn('Publisher("/eggy/command/request"', bridge)
 
     def test_teb_uses_stable_constrained_omnidirectional_motion(self):
         config = yaml.safe_load(read("config/nav/teb_local_planner_params.yaml"))[
