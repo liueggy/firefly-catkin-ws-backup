@@ -17,17 +17,17 @@ TebLocalPlannerROS:
 
   # Velocity limits: forward travel remains dominant; lateral motion is a
   # continuous correction channel instead of an occasional low-speed trim.
-  max_vel_x: 0.27
-  max_vel_x_backwards: 0.10
-  max_vel_y: 0.12
-  max_vel_trans: 0.30
+  max_vel_x: 0.31
+  max_vel_x_backwards: 0.15
+  max_vel_y: 0.08
+  max_vel_trans: 0.32
   min_vel_trans: 0.01
   max_vel_theta: 0.62
   min_vel_theta: 0.08
 
   # --- 加速度限制 ---
-  acc_lim_x: 0.45
-  acc_lim_y: 0.28
+  acc_lim_x: 0.48
+  acc_lim_y: 0.20
   acc_lim_theta: 0.85
 
   # --- 轨迹优化 ---
@@ -63,9 +63,9 @@ TebLocalPlannerROS:
 
   # --- 权重：全向模型，前进优先，横移在边界内平滑修正 ---
   weight_kinematics_nh: 0.0
-  weight_kinematics_forward_drive: 12.0
-  weight_max_vel_y: 2.0
-  weight_acc_lim_y: 1.0
+  weight_kinematics_forward_drive: 20.0
+  weight_max_vel_y: 5.0
+  weight_acc_lim_y: 3.0
   weight_kinematics_turning_radius: 0.0
   weight_optimaltime: 1.5
   weight_shortest_path: 10.0
