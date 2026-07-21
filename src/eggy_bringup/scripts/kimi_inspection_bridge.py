@@ -127,7 +127,13 @@ class KimiInspectionBridge:
                     "image/jpeg",
                 )
             }
-            response = requests.post(url, files=files, timeout=self.timeout)
+            detected_class = str(request_payload.get("detected_class") or "").strip()
+            response = requests.post(
+                url,
+                files=files,
+                data={"detected_class": detected_class} if detected_class else None,
+                timeout=self.timeout,
+            )
             response.raise_for_status()
             api_result = response.json()
 

@@ -73,9 +73,9 @@ class InspectionServoRouteRunner:
             self.search_max_age,
             float(rospy.get_param("~detection_lost_grace", 0.9)))
         self.search_timeout = float(rospy.get_param("~search_timeout", 30.0))
-        self.search_angular_speed_deg = float(rospy.get_param("~search_angular_speed_deg", 18.0))
+        self.search_angular_speed_deg = float(rospy.get_param("~search_angular_speed_deg", 12.0))
         self.search_max_rotation_deg = float(rospy.get_param("~search_max_rotation_deg", 360.0))
-        self.search_step_deg = float(rospy.get_param("~search_step_deg", 90.0))
+        self.search_step_deg = float(rospy.get_param("~search_step_deg", 45.0))
         self.search_step_pause_sec = float(rospy.get_param("~search_step_pause_sec", 1.0))
         self.search_settle_sec = float(rospy.get_param("~search_settle_sec", 2.5))
         self.align_timeout = float(rospy.get_param("~align_timeout", 8.0))
@@ -84,10 +84,24 @@ class InspectionServoRouteRunner:
             self.align_center_deadband,
             float(rospy.get_param("~align_exit_deadband", 0.18)))
         self.align_hold_sec = float(rospy.get_param("~align_hold_sec", 0.45))
-        self.align_kp = float(rospy.get_param("~align_kp", 1.25))
-        self.align_max_wz = float(rospy.get_param("~align_max_wz", 0.30))
-        self.align_min_wz = float(rospy.get_param("~align_min_wz", 0.05))
-        self.angular_accel = float(rospy.get_param("~angular_accel", 0.9))
+        self.align_kp = float(rospy.get_param("~align_kp", 0.65))
+        self.align_max_wz = float(rospy.get_param("~align_max_wz", 0.14))
+        self.align_near_max_wz = min(
+            self.align_max_wz,
+            float(rospy.get_param("~align_near_max_wz", 0.07)))
+        self.align_min_wz = float(rospy.get_param("~align_min_wz", 0.025))
+        self.align_slow_zone = max(
+            self.align_exit_deadband,
+            float(rospy.get_param("~align_slow_zone", 0.35)))
+        self.align_control_max_age = min(
+            self.search_max_age,
+            float(rospy.get_param("~align_control_max_age", 0.45)))
+        self.align_reacquire_timeout = max(
+            self.align_control_max_age,
+            float(rospy.get_param("~align_reacquire_timeout", 1.2)))
+        self.align_error_filter_alpha = max(
+            0.0, min(1.0, float(rospy.get_param("~align_error_filter_alpha", 0.55))))
+        self.angular_accel = float(rospy.get_param("~angular_accel", 0.55))
         self.scan_topic = rospy.get_param("~scan_topic", "/scan")
         self.scan_timeout = float(rospy.get_param("~scan_timeout", 0.6))
         self.navigation_scan_timeout = float(rospy.get_param(
@@ -290,10 +304,23 @@ class InspectionServoRouteRunner:
         cmd.angular.z = self.last_cmd_wz
         self.cmd_pub.publish(cmd)
 
+    def publish_zero_command(self):
+        """Immediately brake instead of ramping an old visual command to zero."""
+        self.cmd_pub.publish(Twist())
+        self.last_cmd_vx = 0.0
+        self.last_cmd_wz = 0.0
+        self.last_cmd_time = time.time()
+
+    def control_detection_candidate(self):
+        """Return only a frame fresh enough to safely drive visual servoing."""
+        return self.visible_detection_candidate(max_age=self.align_control_max_age)
+
     def align_target_at_waypoint(self, wp):
         deadline = time.time() + float(wp.get("align_timeout", self.align_timeout))
         hold_started = None
         centered = False
+        lost_started = None
+        filtered_error = None
         while not rospy.is_shutdown() and time.time() < deadline:
             if self.cancel_requested:
                 return {"ok": False, "state": "cancelled", "message": "cancelled"}
@@ -304,11 +331,26 @@ class InspectionServoRouteRunner:
                     "waypoint": wp, "reason": reason,
                 })
                 return {"ok": False, "state": "rotation_sensor_stop", "message": reason}
-            candidate = self.visible_detection_candidate(allow_grace=True)
+            candidate = self.control_detection_candidate()
             if not candidate:
-                self.stop_robot()
-                self.publish_status("target_lost", "target lost while aligning", {"waypoint": wp})
-                return {"ok": False, "state": "target_lost", "message": "target lost while aligning"}
+                # Keep stale detections only for track identity.  Driving from an
+                # old box is what makes the chassis cross the image centre and
+                # reverse repeatedly when detector frames are briefly missing.
+                self.publish_zero_command()
+                hold_started = None
+                centered = False
+                filtered_error = None
+                if lost_started is None:
+                    lost_started = time.time()
+                elif time.time() - lost_started >= self.align_reacquire_timeout:
+                    self.publish_status("target_lost", "target lost while aligning", {
+                        "waypoint": wp,
+                        "reacquire_timeout": self.align_reacquire_timeout,
+                    })
+                    return {"ok": False, "state": "target_lost", "message": "target lost while aligning"}
+                rospy.sleep(1.0 / self.control_rate_hz)
+                continue
+            lost_started = None
             width = float(candidate.get("image_width", 0.0))
             if width <= 0.0:
                 self.stop_robot()
@@ -317,8 +359,11 @@ class InspectionServoRouteRunner:
                 })
                 return {"ok": False, "state": "invalid_detection", "message": "missing image dimensions"}
             center_x = (float(candidate.get("x1", 0.0)) + float(candidate.get("x2", 0.0))) * 0.5
-            error = (center_x - width * 0.5) / max(width * 0.5, 1.0)
-            stable = self.is_centered_error(error, centered)
+            raw_error = (center_x - width * 0.5) / max(width * 0.5, 1.0)
+            filtered_error = (raw_error if filtered_error is None else
+                              self.align_error_filter_alpha * raw_error +
+                              (1.0 - self.align_error_filter_alpha) * filtered_error)
+            stable = self.is_centered_error(filtered_error, centered)
             if stable:
                 centered = True
                 fully_stable = candidate.get("stable_frames", 0) >= self.search_stable_frames
@@ -326,26 +371,33 @@ class InspectionServoRouteRunner:
                     hold_started = None
                 elif hold_started is None:
                     hold_started = time.time()
-                self.publish_smooth_command(0.0, 0.0)
+                # Entering the acceptable region is a hard braking event.  A
+                # smoothed zero would preserve angular velocity for extra frames.
+                self.publish_zero_command()
                 if (hold_started is not None and
                         time.time() - hold_started >= self.align_hold_sec):
                     self.stop_robot()
                     self.publish_status("aligned", "target aligned within camera center tolerance", {
                         "waypoint": wp,
                         "target": candidate,
-                        "center_error": round(error, 4),
+                        "center_error": round(raw_error, 4),
+                        "filtered_center_error": round(filtered_error, 4),
                     })
                     return {
                         "ok": True,
                         "state": "aligned",
                         "target": candidate,
-                        "center_error": round(error, 4),
+                        "center_error": round(raw_error, 4),
+                        "filtered_center_error": round(filtered_error, 4),
                     }
             else:
                 centered = False
                 hold_started = None
                 target_wz = max(-self.align_max_wz,
-                                min(self.align_max_wz, -self.align_kp * error))
+                                min(self.align_max_wz, -self.align_kp * filtered_error))
+                if abs(filtered_error) <= self.align_slow_zone:
+                    target_wz = max(-self.align_near_max_wz,
+                                    min(self.align_near_max_wz, target_wz))
                 if abs(target_wz) < self.align_min_wz:
                     target_wz = self.align_min_wz if target_wz >= 0.0 else -self.align_min_wz
                 self.publish_smooth_command(0.0, target_wz)
@@ -713,6 +765,7 @@ class InspectionServoRouteRunner:
                     self.publish_status("kimi_complete", "kimi inspection finished at %s" % wp["id"], {
                         "index": index,
                         "waypoint": wp,
+                        "target": point.get("target"),
                         "kimi": kimi,
                     })
                     if not kimi.get("ok") and self.stop_on_kimi_fail:
@@ -839,13 +892,16 @@ class InspectionServoRouteRunner:
             return None
         return candidate
 
-    def visible_detection_candidate(self, allow_grace=False):
+    def visible_detection_candidate(self, allow_grace=False, max_age=None):
         with self.lock:
             candidate = dict(self.detection_candidate) if self.detection_candidate else None
         if not candidate:
             return None
-        max_age = self.detection_lost_grace if allow_grace else self.search_max_age
-        if time.time() - candidate.get("stamp", 0.0) > max_age:
+        candidate_max_age = (self.detection_lost_grace if allow_grace
+                             else self.search_max_age)
+        if max_age is not None:
+            candidate_max_age = max(0.0, float(max_age))
+        if time.time() - candidate.get("stamp", 0.0) > candidate_max_age:
             return None
         if candidate.get("stable_frames", 0) < self.search_acquire_frames:
             return None
@@ -884,6 +940,9 @@ class InspectionServoRouteRunner:
                     aligned = self.align_target_at_waypoint(wp)
                     if aligned.get("ok"):
                         return dict(aligned, rotated_deg=0.0)
+                    if aligned.get("state") in (
+                            "cancelled", "invalid_detection", "align_timeout", "target_lost"):
+                        return dict(aligned, rotated_deg=0.0)
             while not rospy.is_shutdown() and time.time() < deadline:
                 if self.cancel_requested:
                     return {"ok": False, "state": "cancelled", "message": "cancelled"}
@@ -906,7 +965,8 @@ class InspectionServoRouteRunner:
                     aligned = self.align_target_at_waypoint(wp)
                     if aligned.get("ok"):
                         return dict(aligned, rotated_deg=round(math.degrees(rotated_rad), 2))
-                    if aligned.get("state") in ("cancelled", "invalid_detection", "align_timeout"):
+                    if aligned.get("state") in (
+                            "cancelled", "invalid_detection", "align_timeout", "target_lost"):
                         return dict(aligned, rotated_deg=round(math.degrees(rotated_rad), 2))
                 if not step_result["ok"]:
                     return {
@@ -925,7 +985,8 @@ class InspectionServoRouteRunner:
                     aligned = self.align_target_at_waypoint(wp)
                     if aligned.get("ok"):
                         return dict(aligned, rotated_deg=round(math.degrees(rotated_rad), 2))
-                    if aligned.get("state") in ("cancelled", "invalid_detection", "align_timeout"):
+                    if aligned.get("state") in (
+                            "cancelled", "invalid_detection", "align_timeout", "target_lost"):
                         return dict(aligned, rotated_deg=round(math.degrees(rotated_rad), 2))
             return {
                 "ok": False,
@@ -990,11 +1051,20 @@ class InspectionServoRouteRunner:
             rospy.sleep(0.2)
             return {"ok": True, "state": "DRY_RUN", "task": wp.get("kimi_task", self.kimi_task)}
         request_id = str(uuid.uuid4())
+        detected_class = str((target or {}).get("class_name", ""))
+        if detected_class not in ("water_meter", "pressure_gauge"):
+            detected_class = ""
+        configured_class = str(wp.get("expected_class", "any"))
         payload = {
             "request_id": request_id,
             "task": str(wp.get("kimi_task", self.kimi_task)),
             "waypoint_id": wp.get("id"),
-            "expected_class": wp.get("expected_class", "any"),
+            # The detector lock is authoritative for this single capture.  Keep
+            # the waypoint setting only as metadata so it cannot relabel Kimi's
+            # reading when the real object differs from the task configuration.
+            "expected_class": detected_class or configured_class,
+            "detected_class": detected_class,
+            "configured_class": configured_class,
             "roi": self.roi_from_target(target),
         }
         with self.lock:

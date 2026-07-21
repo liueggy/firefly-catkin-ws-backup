@@ -111,6 +111,9 @@ class MissionRunnerStateTest(unittest.TestCase):
         runner.inspection_capable = True
         runner.seen_request_ids = set()
         runner.search_settle_sec = 0
+        runner.search_max_age = 0.8
+        runner.search_acquire_frames = 1
+        runner.align_control_max_age = 0.45
         runner.roi_padding_ratio = 0.18
         runner.status_events = []
         runner.publish_status = lambda state, message, extra, mission=None: runner.status_events.append(state)
@@ -177,6 +180,44 @@ class MissionRunnerStateTest(unittest.TestCase):
         runner.on_detection(_Message(__import__("json").dumps({
             "image_width": 640, "image_height": 480, "detections": []})))
         self.assertEqual(locked, runner.detection_candidate)
+
+    def test_stale_locked_box_is_never_used_for_motion_control(self):
+        runner = self.make_runner()
+        runner.detection_candidate = {
+            "stamp": __import__("time").time() - 0.6,
+            "stable_frames": 4,
+            "class_name": "pressure_gauge",
+        }
+        self.assertIsNotNone(runner.visible_detection_candidate())
+        self.assertIsNone(runner.control_detection_candidate())
+
+    def test_kimi_request_uses_detected_class_as_authority(self):
+        runner = self.make_runner()
+        runner.dry_run = False
+        runner.kimi_results = {}
+        runner.kimi_timeout = 1.0
+        runner.kimi_task = "meter"
+        runner.run_kimi_inspection = types.MethodType(
+            runner_module.InspectionServoRouteRunner.run_kimi_inspection, runner)
+        sent = []
+
+        class CompletingPublisher:
+            def publish(_self, message):
+                payload = __import__("json").loads(message.data)
+                sent.append(payload)
+                runner.kimi_results[payload["request_id"]] = {"ok": True}
+
+        runner.kimi_request_pub = CompletingPublisher()
+        result = runner.run_kimi_inspection(
+            {"id": "p1", "expected_class": "water_meter"},
+            {"class_name": "pressure_gauge", "image_width": 640,
+             "image_height": 480, "x1": 100, "y1": 100,
+             "x2": 300, "y2": 300})
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("pressure_gauge", sent[0]["expected_class"])
+        self.assertEqual("pressure_gauge", sent[0]["detected_class"])
+        self.assertEqual("water_meter", sent[0]["configured_class"])
 
     def test_alignment_hysteresis_is_wider_than_entry_deadband(self):
         runner = self.make_runner()

@@ -291,7 +291,11 @@ class LaunchContractTest(unittest.TestCase):
         root = ET.fromstring(read("launch/eggy_system.launch"))
         args = {item.attrib["name"]: item.attrib.get("default") for item in root.findall("arg")}
         self.assertLessEqual(int(args["inspection_search_stable_frames"]), 4)
-        self.assertLessEqual(float(args["inspection_align_max_wz"]), 0.30)
+        self.assertLessEqual(float(args["inspection_search_angular_speed_deg"]), 12.0)
+        self.assertLessEqual(float(args["inspection_search_step_deg"]), 45.0)
+        self.assertLessEqual(float(args["inspection_align_max_wz"]), 0.14)
+        self.assertLessEqual(float(args["inspection_align_near_max_wz"]), 0.07)
+        self.assertLessEqual(float(args["inspection_align_control_max_age"]), 0.45)
         runner = root.find(".//node[@name='inspection_servo_route_runner']")
         runner_params = {
             item.attrib["name"]: item.attrib["value"]
@@ -300,6 +304,8 @@ class LaunchContractTest(unittest.TestCase):
         self.assertIn("search_acquire_frames", runner_params)
         self.assertIn("detection_lost_grace", runner_params)
         self.assertIn("align_exit_deadband", runner_params)
+        self.assertIn("align_control_max_age", runner_params)
+        self.assertIn("align_reacquire_timeout", runner_params)
 
         amcl = root.find(".//node[@name='amcl']")
         amcl_params = {

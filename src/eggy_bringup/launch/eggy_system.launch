@@ -44,16 +44,19 @@
   <arg name="inspection_search_stable_frames" default="4" />
   <arg name="inspection_search_acquire_frames" default="1" />
   <arg name="inspection_detection_lost_grace" default="0.9" />
-  <arg name="inspection_search_angular_speed_deg" default="18" />
-  <arg name="inspection_search_step_deg" default="90" />
+  <arg name="inspection_search_angular_speed_deg" default="12" />
+  <arg name="inspection_search_step_deg" default="45" />
   <arg name="inspection_search_step_pause_sec" default="1.0" />
   <arg name="inspection_search_settle_sec" default="0.5" />
   <arg name="inspection_align_timeout" default="8.0" />
   <arg name="inspection_align_center_deadband" default="0.12" />
   <arg name="inspection_align_hold_sec" default="0.45" />
   <arg name="inspection_align_exit_deadband" default="0.18" />
-  <arg name="inspection_align_kp" default="1.25" />
-  <arg name="inspection_align_max_wz" default="0.30" />
+  <arg name="inspection_align_kp" default="0.65" />
+  <arg name="inspection_align_max_wz" default="0.14" />
+  <arg name="inspection_align_near_max_wz" default="0.07" />
+  <arg name="inspection_align_control_max_age" default="0.45" />
+  <arg name="inspection_align_reacquire_timeout" default="1.2" />
   <arg name="inspection_scan_timeout" default="0.6" />
   <arg name="inspection_rotation_clearance" default="0.32" />
   <arg name="inspection_roi_padding_ratio" default="0.18" />
@@ -300,6 +303,9 @@
       <param name="align_hold_sec" value="$(arg inspection_align_hold_sec)" />
       <param name="align_kp" value="$(arg inspection_align_kp)" />
       <param name="align_max_wz" value="$(arg inspection_align_max_wz)" />
+      <param name="align_near_max_wz" value="$(arg inspection_align_near_max_wz)" />
+      <param name="align_control_max_age" value="$(arg inspection_align_control_max_age)" />
+      <param name="align_reacquire_timeout" value="$(arg inspection_align_reacquire_timeout)" />
       <param name="scan_timeout" value="$(arg inspection_scan_timeout)" />
       <param name="rotation_clearance" value="$(arg inspection_rotation_clearance)" />
       <param name="roi_padding_ratio" value="$(arg inspection_roi_padding_ratio)" />

@@ -161,6 +161,20 @@ def analyze_meter():
             "error": "no image"
         }), 400
 
+    detected_class = str(request.form.get("detected_class") or "").strip()
+    if detected_class not in ("water_meter", "pressure_gauge"):
+        detected_class = ""
+    detector_focus = ""
+    if detected_class:
+        other_class = ("pressure_gauge" if detected_class == "water_meter"
+                       else "water_meter")
+        detector_focus = (
+            "\n本图是目标检测器围绕 %s 裁剪的单目标 ROI。"
+            "本次只读取 %s；不要把它改判成其他类别，"
+            "并将 %s 的 present 设为 false。\n" %
+            (detected_class, detected_class, other_class)
+        )
+
     prompt = """
 你是一个工业巡检读表助手。图片可能是整张机器人相机画面，里面可能同时出现：
 - 机械水表 water_meter：蓝色/金色外壳，上方有矩形滚轮数字窗口。
@@ -214,7 +228,7 @@ def analyze_meter():
   },
   "summary": "简短总结看到并读取了哪些表"
 }
-"""
+""" + detector_focus
 
     try:
         image = request.files["image"]
@@ -222,7 +236,8 @@ def analyze_meter():
 
         return jsonify({
             "ok": True,
-            "task": "water_meter",
+            "task": detected_class or "meter",
+            "detected_class": detected_class or None,
             "image_saved": image_saved,
             "result": result
         })
@@ -230,7 +245,8 @@ def analyze_meter():
     except Exception as e:
         return jsonify({
             "ok": False,
-            "task": "water_meter",
+            "task": detected_class or "meter",
+            "detected_class": detected_class or None,
             "error": str(e)
         }), 500
 
