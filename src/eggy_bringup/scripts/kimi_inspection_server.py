@@ -99,6 +99,46 @@ def extract_json(text):
     }
 
 
+def focus_meter_result(result, detected_class):
+    """Keep the AI result aligned with the class locked by the detector."""
+    if detected_class not in ("water_meter", "pressure_gauge") or not isinstance(result, dict):
+        return result
+    readings = result.get("readings")
+    if not isinstance(readings, dict):
+        return result
+
+    other_class = ("pressure_gauge" if detected_class == "water_meter"
+                   else "water_meter")
+    other = readings.get(other_class)
+    if isinstance(other, dict):
+        other["present"] = False
+        other["reading"] = "unknown"
+        other["best_effort_reading"] = "unknown"
+
+    if detected_class == "water_meter":
+        meter = readings.get("water_meter")
+        analysis = result.setdefault("analysis", {})
+        if isinstance(meter, dict) and meter.get("present", False):
+            reading = meter.get("reading") or meter.get("best_effort_reading") or "unknown"
+            readable = str(reading).strip().lower() not in ("", "unknown", "none")
+            analysis.update({
+                "pressure_state": "unknown",
+                "severity": "normal" if readable else "unknown",
+                "message": ("水表读数为%s %s" %
+                            (reading, meter.get("unit") or "m3"))
+                           if readable else "未能可靠读取水表，建议重新拍摄或人工复核",
+                "recommended_action": "继续巡检" if readable else "重新拍摄或人工复核",
+            })
+        else:
+            analysis.update({
+                "pressure_state": "unknown",
+                "severity": "unknown",
+                "message": "未能可靠识别水表，建议重新拍摄或人工复核",
+                "recommended_action": "重新拍摄或人工复核",
+            })
+    return result
+
+
 def analyze_image_with_kimi(image_file, prompt, prefix):
     """
     閫氱敤鍥惧儚鍒嗘瀽鍑芥暟銆?    image_file: Flask 涓婁紶鐨勫浘鐗?    prompt: 缁?Kimi 鐨勪换鍔℃彁绀鸿瘝
@@ -233,6 +273,7 @@ def analyze_meter():
     try:
         image = request.files["image"]
         result, image_saved = analyze_image_with_kimi(image, prompt, "meter")
+        result = focus_meter_result(result, detected_class)
 
         return jsonify({
             "ok": True,

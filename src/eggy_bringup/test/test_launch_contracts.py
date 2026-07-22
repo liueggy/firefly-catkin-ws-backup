@@ -327,6 +327,15 @@ class LaunchContractTest(unittest.TestCase):
         self.assertNotIn("_align_kp:=1.25", command_center)
         self.assertNotIn("_align_max_wz:=0.30", command_center)
 
+    def test_kimi_result_is_scoped_to_the_detector_locked_class(self):
+        server = read("scripts/kimi_inspection_server.py")
+        bridge = read("scripts/kimi_inspection_bridge.py")
+        runner = read("scripts/inspection_servo_route_runner.py")
+        self.assertIn("def focus_meter_result", server)
+        self.assertIn("result = focus_meter_result(result, detected_class)", server)
+        self.assertIn('data={"detected_class": detected_class}', bridge)
+        self.assertIn('"detected_class": detected_class', runner)
+
     def test_meter_overlay_stays_live_between_inference_frames(self):
         detector = read("src/meter_rknn_detect_node.cpp")
         self.assertIn("publish_cached_overlay", detector)
