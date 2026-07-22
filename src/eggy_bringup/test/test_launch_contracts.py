@@ -333,6 +333,9 @@ class LaunchContractTest(unittest.TestCase):
         runner = read("scripts/inspection_servo_route_runner.py")
         self.assertIn("def focus_meter_result", server)
         self.assertIn("result = focus_meter_result(result, detected_class)", server)
+        self.assertIn("无论是机械滚轮、印刷、贴附还是手写", server)
+        self.assertIn("不得因为数字是手写的", server)
+        self.assertIn("仍须填写 reading 和 best_effort_reading", server)
         self.assertIn('data={"detected_class": detected_class}', bridge)
         self.assertIn('"detected_class": detected_class', runner)
 

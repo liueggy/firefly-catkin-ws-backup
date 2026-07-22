@@ -214,6 +214,14 @@ def analyze_meter():
             "并将 %s 的 present 设为 false。\n" %
             (detected_class, detected_class, other_class)
         )
+        if detected_class == "water_meter":
+            detector_focus += (
+                "重要判读规则：ROI 中水表本体、表盘或数字显示区域内出现的数字，"
+                "无论是机械滚轮、印刷、贴附还是手写，都必须作为本次水表示数读取；"
+                "不得因为数字是手写的、不是机械滚轮或看起来像标记而拒绝。"
+                "请保持数字原有顺序和前导零；个别位不确定时用 ?，"
+                "但仍须填写 reading 和 best_effort_reading。\n"
+            )
 
     prompt = """
 你是一个工业巡检读表助手。图片可能是整张机器人相机画面，里面可能同时出现：
@@ -225,8 +233,8 @@ def analyze_meter():
 1. 如果只看到水表，就只给 water_meter 读数，pressure_gauge.present=false。
 2. 如果只看到水压表，就只给 pressure_gauge 读数，water_meter.present=false。
 3. 如果两种都看到，就两个都读。
-4. 不要读取瓶身标签、纸箱文字、蓝色盖子贴纸。
-5. 水表读取机械滚轮数字窗口；即使有反光/倾斜/轻微模糊，也要给 best_effort_reading。某位不确定可用 ?。
+4. 只排除水表目标范围之外的瓶身标签、纸箱文字和背景文字；水表本体、表盘或数字显示区域内的数字都属于示数。
+5. 水表上的任何可见数字都按水表示数读取，无论数字来自机械滚轮、印刷、贴附还是手写，不得因其不是机械滚轮而拒绝。保持原有顺序和前导零；即使有反光、倾斜或轻微模糊，也要填写 reading 和 best_effort_reading，某位不确定可用 ?。
 6. 水压表读取指针指向的刻度值，单位 MPa；可以给一位小数，例如 3.5。若介于两格之间，给最接近估计值。
 7. confidence 用 0.0 到 1.0；不确定时 status 写 unclear，但仍尽量给 best_effort_reading。
 8. 读到水压表后必须分析当前巡检情况：
