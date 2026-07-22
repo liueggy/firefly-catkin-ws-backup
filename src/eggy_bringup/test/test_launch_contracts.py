@@ -339,6 +339,15 @@ class LaunchContractTest(unittest.TestCase):
         self.assertIn('data={"detected_class": detected_class}', bridge)
         self.assertIn('"detected_class": detected_class', runner)
 
+    def test_network_route_policy_keeps_4g_as_wifi_fallback(self):
+        policy = read("scripts/eggy_network_route_policy.sh")
+        self.assertIn('WIFI_IFACE="${EGGY_WIFI_IFACE:-wlan0}"', policy)
+        self.assertIn('MODEM_IFACE="${EGGY_MODEM_IFACE:-enx020c29a39b6d}"', policy)
+        self.assertIn('WIFI_METRIC="${EGGY_WIFI_METRIC:-40}"', policy)
+        self.assertIn('MODEM_ACTIVE_METRIC="${EGGY_MODEM_ACTIVE_METRIC:-500}"', policy)
+        self.assertIn('MODEM_FALLBACK_METRIC="${EGGY_MODEM_FALLBACK_METRIC:-100}"', policy)
+        self.assertIn('device_connected "$WIFI_IFACE"', policy)
+
     def test_meter_overlay_stays_live_between_inference_frames(self):
         detector = read("src/meter_rknn_detect_node.cpp")
         self.assertIn("publish_cached_overlay", detector)
